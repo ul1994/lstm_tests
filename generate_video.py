@@ -8,7 +8,7 @@ import os, sys
 from scipy.io import loadmat
 from random import shuffle
 
-def gather_videos(SEQ_LEN = 4, still=False):
+def gather_videos(SEQ_LEN = 4, still=False, speedup=2):
 	refs = []
 
 
@@ -33,7 +33,8 @@ def gather_videos(SEQ_LEN = 4, still=False):
 		vis, dim = mat['visibility'], mat['dimensions']
 
 		# for bii in range(0, len(imgs), SEQ_LEN):
-		for bii in range(0, len(imgs), SEQ_LEN):
+		end = int(len(imgs)/speedup)
+		for bii in range(0, end, SEQ_LEN):
 			ref = {
 				'frames': [],
 	#             'labels': [],
@@ -45,8 +46,8 @@ def gather_videos(SEQ_LEN = 4, still=False):
 			}
 
 
-			if bii + SEQ_LEN >= len(imgs):
-				rng = range(len(imgs) - SEQ_LEN, len(imgs))
+			if bii + SEQ_LEN >= end:
+				rng = range(end - SEQ_LEN, end)
 			else:
 				rng = range(bii, bii+SEQ_LEN)
 			assert rng is not None
@@ -54,8 +55,8 @@ def gather_videos(SEQ_LEN = 4, still=False):
 			if still:
 				rng = [bii] * SEQ_LEN # all the same ind
 			for ii in rng:
+				ii *= speedup
 
-				assert ii < len(xs)
 				ref['frames'].append('%s/%s' % (flpath, imgs[ii]))
 
 				try:
@@ -96,11 +97,9 @@ import cv2
 from cv2 import imread
 import numpy as np
 import random
-def size_image(img, bbox, size=368):
+def size_image(img, bbox, zoom, size=368):
 	img = img.astype(np.float32)
 
-	# zoom = 1 / random.uniform(1.25, 1.75) # x1.5 ~ x2.0
-	zoom = 1 / random.uniform(1.0, 1.25) # x1.5 ~ x2.0
 	targ = size * zoom
 	half = targ / 2
 
@@ -210,7 +209,8 @@ def next_video_batch(refs, bsize=6):
 	targets = []
 
 	for ref in brefs:
-		sized, specs = zip(*[size_image(imread(path), ref['boxes'][ii]) for ii, path in enumerate(ref['frames'])])
+		zoom = 1 / random.uniform(1.0, 1.25) # x1.5 ~ x2.0
+		sized, specs = zip(*[size_image(imread(path), ref['boxes'][ii], zoom) for ii, path in enumerate(ref['frames'])])
 
 		heats = [create_heatmaps(ref['coco_coords'][ii], specs[ii]) for ii in range(len(ref['frames']))]
 		mask = [create_mask(ref['boxes'][ii], specs[ii], coords=ref['coco_coords'][ii]) for ii in range(len(ref['frames']))]

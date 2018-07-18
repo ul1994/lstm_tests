@@ -165,7 +165,7 @@ if __name__ == '__main__':
 	model.load_weights('checkpoints/lstm-epoch_0.h5')
 
 	from generate_video import *
-	dset = gather_videos(SEQ_LEN=args.time_steps, still=True)
+	dset = gather_videos(SEQ_LEN=args.time_steps, still=False)
 	# videos, masks, targets = next_video_batch(dset, batch_size)
 
 	def gen(df):
