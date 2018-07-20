@@ -1,7 +1,7 @@
 from keras.models import Model
 from keras.layers.merge import Concatenate
 from keras.layers import Activation, Input, Lambda
-from keras.layers import TimeDistributed as TD
+from keras.layers import TimeDistributed, ConvLSTM2D
 from keras.layers.convolutional import Conv2D
 from keras.layers.pooling import MaxPooling2D
 from keras.layers.merge import Multiply
@@ -11,6 +11,16 @@ from keras.initializers import random_normal,constant
 
 def relu(): return Activation('relu')
 
+def conv_lstm(nf, ks, name, weight_decay, first=False):
+	kernel_reg = l2(weight_decay[0]) if weight_decay else None
+	bias_reg = l2(weight_decay[1]) if weight_decay else None
+
+	return ConvLSTM2D(nf, (ks, ks), padding='same', name=name,
+					kernel_regularizer=kernel_reg,
+					bias_regularizer=bias_reg,
+					kernel_initializer=random_normal(stddev=0.01),
+					bias_initializer=constant(0.0),
+					return_sequences=True)
 
 def conv(nf, ks, name, weight_decay, first=False):
 	kernel_reg = l2(weight_decay[0]) if weight_decay else None
@@ -28,10 +38,10 @@ def pooling(ks, st, name):
 	# return x
 
 
-def vgg_block(x, weight_decay):
+def vgg_block(x, weight_decay, rnn=True):
 	# Block 1
-	# fn0 = Lambda(lambda var: var)
-	# TD = TimeDistributed
+	if rnn is False: TD = lambda x: x
+	else: TD = TimeDistributed
 
 	x = TD(conv(64, 3, "conv1_1", (weight_decay, 0), first=True))(x)
 	x = TD(relu())(x)
@@ -71,7 +81,10 @@ def vgg_block(x, weight_decay):
 	return x
 
 
-def stage1_block(x, num_p, branch, weight_decay):
+def stage1_block(x, num_p, branch, weight_decay, rnn=True):
+	if rnn is False: TD = lambda x: x
+	else: TD = TimeDistributed
+
 	# Block 1
 	x = TD(conv(128, 3, "Mconv1_stage1_L%d" % branch, (weight_decay, 0)))(x)
 	x = TD(relu())(x)
@@ -85,7 +98,10 @@ def stage1_block(x, num_p, branch, weight_decay):
 	return x
 
 
-def stageT_block(x, num_p, stage, branch, weight_decay):
+def stageT_block(x, num_p, stage, branch, weight_decay, rnn=True):
+	if rnn is False: TD = lambda x: x
+	else: TD = TimeDistributed
+
 	# Block 1
 	x = TD(conv(128, 7, "Mconv1_stage%d_L%d" % (stage, branch), (weight_decay, 0)))(x)
 	x = TD(relu())(x)
@@ -106,8 +122,42 @@ def stageT_block(x, num_p, stage, branch, weight_decay):
 
 def apply_mask(x, mask2, num_p, stage, branch):
 	w_name = "weight_stage%d_L%d" % (stage, branch)
-	if num_p == 38:
-		w = Multiply(name=w_name)([x, mask1]) # vec_weight
-	else:
-		w = Multiply(name=w_name) ([x, mask2])  # vec_heat
+	w = Multiply(name=w_name) ([x, mask2])  # vec_heat
 	return w
+
+def stage1_block_lstm(x, num_p, branch, weight_decay):
+	# Block 1
+	x = conv_lstm(128, 3, "Mconv1_stage1_L%d" % branch, (weight_decay, 0))(x)
+	x = TimeDistributed(relu())(x)
+	x = conv_lstm(128, 3, "Mconv2_stage1_L%d" % branch, (weight_decay, 0))(x)
+	x = TimeDistributed(relu())(x)
+	x = conv_lstm(128, 3, "Mconv3_stage1_L%d" % branch, (weight_decay, 0))(x)
+	x = TimeDistributed(relu())(x)
+	x = conv_lstm(512, 1, "Mconv4_stage1_L%d" % branch, (weight_decay, 0))(x)
+	x = TimeDistributed(relu())(x)
+	x = conv_lstm(num_p, 1, "Mconv5_stage1_L%d" % branch, (weight_decay, 0))(x)
+	return x
+
+
+def stageT_block_lstm(x, num_p, stage, branch, weight_decay):
+	# Block 1
+	TD = TimeDistributed
+
+	# print(x.get_shape())
+	x = conv_lstm(128, 7, "Mconv1_stage%d_L%d" % (stage, branch), (weight_decay, 0))(x)
+	x = TimeDistributed(relu())(x)
+	# print(x.get_shape())
+	# exit()
+	x = conv_lstm(128, 7, "Mconv2_stage%d_L%d" % (stage, branch), (weight_decay, 0))(x)
+	x = TimeDistributed(relu())(x)
+	x = TD(conv(128, 7, "Mconv3_stage%d_L%d" % (stage, branch), (weight_decay, 0)))(x)
+	x = TD(relu())(x)
+	x = TD(conv(128, 7, "Mconv4_stage%d_L%d" % (stage, branch), (weight_decay, 0)))(x)
+	x = TD(relu())(x)
+	x = TD(conv(128, 7, "Mconv5_stage%d_L%d" % (stage, branch), (weight_decay, 0)))(x)
+	x = TD(relu())(x)
+	x = TD(conv(128, 1, "Mconv6_stage%d_L%d" % (stage, branch), (weight_decay, 0)))(x)
+	x = TD(relu())(x)
+	x = TD(conv(num_p, 1, "Mconv7_stage%d_L%d" % (stage, branch), (weight_decay, 0)))(x)
+
+	return x

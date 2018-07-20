@@ -169,14 +169,12 @@ if __name__ == '__main__':
 	# videos, masks, targets = next_video_batch(dset, batch_size)
 
 	def gen(df):
-		every = 4
+		every = 3
 		counter = 0
 
 		while True:
 			for (inp, out) in df.get_data():
 				vids, mas, targs = next_video_batch(dset, batch_size)
-
-				# yield inp, out
 				videos, masks = [], []
 				targets = [[], [], [], [], [], []]
 
