@@ -1,0 +1,9 @@
+.*
+checkpoints
+previews
+__pycache__
+assets
+*.sh
+*.jpg
+*.png
+*.out

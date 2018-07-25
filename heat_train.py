@@ -15,7 +15,7 @@ import keras.backend as K
 from keras.models import Model, Sequential
 from keras.layers.merge import Concatenate
 from keras.applications.vgg19 import VGG19
-from keras.layers import Input, Lambda, LSTM, Reshape, TimeDistributed, Dense
+from keras.layers import Input, Lambda, LSTM, Reshape, TimeDistributed, Dense, Conv2D
 from keras.callbacks import LearningRateScheduler, ModelCheckpoint, CSVLogger, TensorBoard
 from keras.utils import multi_gpu_model as multigpu
 
@@ -23,15 +23,24 @@ from components import *
 sys.path.append('/scratch/ua349/pose/tf/ver1')
 from training.optimizers import MultiSGD
 from training.dataset import get_dataflow
+from snapshot import Snapshot
 
 from models import *
 
+# base_lr = 1e-6 # 2e-5
 # base_lr = 2e-5 # 2e-5
-base_lr = 0.00004
+base_lr = 0.0001
+# base_lr = 4e-5 # 2e-5
 momentum = 0.9
 lr_policy =  "step"
 gamma = 0.333
 stepsize = 136106 #68053   // after each stepsize iterations update learning rate: lr=lr*gamma
+
+weights_best_file = "weights.best.h5"
+training_log = "training.csv"
+logs_dir = "./logs"
+
+DATA_DIR = '/beegfs/ua349/lstm/coco'
 
 def batch_dataflow(df, batch_size, time_steps=4, num_stages=6):
 		"""
@@ -44,10 +53,11 @@ def batch_dataflow(df, batch_size, time_steps=4, num_stages=6):
 		df = BatchData(df, batch_size, use_list=False)
 		df = MapData(df, lambda x: (
 			[
-				np.stack([x[0]] * time_steps, axis=1),
-				np.stack([x[2]] * time_steps, axis=1)
+				x[0],
+				x[2]
 			],
-			[np.stack([x[4]] * time_steps, axis=1)] * num_stages))
+			[x[4]] * num_stages
+		))
 		df.reset_state()
 		return df
 
@@ -74,8 +84,8 @@ def get_lr_multipliers(model):
 			elif re.match("Mconv\d_stage.*", layer.name):
 				kernel_name = layer.weights[0].name
 				bias_name = layer.weights[1].name
-				lr_mult[kernel_name] = 4
-				lr_mult[bias_name] = 8
+				lr_mult[kernel_name] = 1
+				lr_mult[bias_name] = 2
 
 			# vgg
 			else:
@@ -85,6 +95,59 @@ def get_lr_multipliers(model):
 				lr_mult[bias_name] = 2
 
 	return lr_mult
+
+def load_vgg_weights(model):
+	from_vgg = {
+		'conv1_1': 'block1_conv1',
+		'conv1_2': 'block1_conv2',
+		'conv2_1': 'block2_conv1',
+		'conv2_2': 'block2_conv2',
+		'conv3_1': 'block3_conv1',
+		'conv3_2': 'block3_conv2',
+		'conv3_3': 'block3_conv3',
+		'conv3_4': 'block3_conv4',
+		'conv4_1': 'block4_conv1',
+		'conv4_2': 'block4_conv2'
+	}
+	vgg_model = VGG19(include_top=False, weights='imagenet')
+
+	loaded = 0
+	for layer in model.layers:
+		if isinstance(layer, TimeDistributed) and isinstance(layer.layer, Conv2D):
+			layer = layer.layer
+
+			if layer.name in from_vgg:
+				vgg_layer_name = from_vgg[layer.name]
+				layer.set_weights(vgg_model.get_layer(vgg_layer_name).get_weights())
+				loaded += 1
+
+	print('Loaded %d from vgg.' % loaded)
+	assert loaded != 0
+
+def load_any_weights(model):
+	loaded = 0
+	failed = 0
+	badlist = []
+	for layer in model.layers:
+		if isinstance(layer, TimeDistributed) and isinstance(layer.layer, Conv2D):
+			layer = layer.layer
+			# print(layer.namse)
+			wfile = layer.name + '_matrix.npy'
+			bfile = layer.name + '_bias.npy'
+
+			wmat = np.load('/scratch/ua349/pose/tf/ver1/model/weights/%s' % wfile)
+			bias = np.load('/scratch/ua349/pose/tf/ver1/model/weights/%s' % bfile)
+
+			try:
+				layer.set_weights([wmat, bias])
+				loaded += 1
+			except:
+				failed += 1
+				badlist.append(layer.name)
+	print('Loaded %d layers (mismatch: %d)' % (loaded, failed))
+	for name in badlist:
+		print('- %s' % name)
+
 
 def step_decay(epoch, iterations_per_epoch):
 	"""
@@ -101,14 +164,14 @@ def step_decay(epoch, iterations_per_epoch):
 
 	return lrate
 
-def get_loss_funcs(batch_size, time_steps=4):
+def get_loss_funcs(batch_size):
 	"""
 	Euclidean loss as implemented in caffe
 	https://github.com/BVLC/caffe/blob/master/src/caffe/layers/euclidean_loss_layer.cpp
 	:return:
 	"""
 	def _eucl_loss(x, y):
-		return K.sum(K.square(x - y)) / batch_size / 2 / time_steps
+		return K.sum(K.square(x - y)) / batch_size / 2
 
 	losses = {}
 	losses["weight_stage1_L2"] = _eucl_loss
@@ -123,31 +186,27 @@ def get_loss_funcs(batch_size, time_steps=4):
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--name', type=str, required=True)
-	parser.add_argument('--arch', default='mod_v1', type=str)
+
+	parser.add_argument('--arch', default='heat_v1', type=str)
 	parser.add_argument('--dataset', default='train', type=str)
-	parser.add_argument('--format', default='last', type=str)
+	parser.add_argument('--last_epoch', default=1, type=int)
 
 	parser.add_argument('--epochs', default=5, type=int)
-	parser.add_argument('--time_steps', default=4, type=int)
-
+	parser.add_argument('--batch', default=6, type=int)
 	parser.add_argument('--gpus', default=1, type=int)
-	parser.add_argument('--batch', default=8, type=int)
+
 	parser.add_argument('--count', default=False, type=bool)
 	args = parser.parse_args()
 
+
 	batch_size = args.batch
 
-	archs = {
-		'conv_v2': conv_v2,
-		'mod_v1': mod_v1,
-		'mod_v2': mod_v2,
+	avail = {
+		'heat_v1': heat_v1,
 	}
 
-	model = archs[args.arch](time_steps=args.time_steps)
+	model = avail[args.arch]()
 
-	if args.count:
-		model.summary()
-		exit()
 
 	if args.gpus > 1:
 		batch_size = args.batch * args.gpus
@@ -166,105 +225,50 @@ if __name__ == '__main__':
 						nesterov=False, lr_mult=lr_multipliers)
 
 
-	loss_funcs = get_loss_funcs(batch_size, time_steps=args.time_steps)
+	loss_funcs = get_loss_funcs(batch_size)
 	model.compile(loss=loss_funcs, optimizer=multisgd, metrics=["accuracy"])
 
+	if args.count:
+		model.summary()
+		exit()
 
-	# model.load_weights('checkpoints/lstm-epoch_0.h5')
-	mono_model = heat_v1()
-	mono_model.load_weights('checkpoints/v1-epoch_0.h5')
-	loaded = 0
-	count_layers = 0
-	for layer in mono_model.layers:
-		if isinstance(layer, Conv2D):
-			count_layers += 1
-			for targ in model.layers:
-				if isinstance(targ, TimeDistributed) and isinstance(targ.layer, Conv2D):
-					targ = targ.layer
-					if targ.name == layer.name:
-						try:
-							targ.set_weights(layer.get_weights())
-							loaded +=1
-						except:
-							print(layer.name)
-							print(layer.get_shape())
-							print(targ.get_shape())
-							raise Exception('Could not set')
-				elif isinstance(targ, ConvLSTM2D):
-					pass
-	print(' [*] Loaded %d/%d weights' % (loaded, count_layers))
-
-	from generate_video import *
-	dset = gather_videos(SEQ_LEN=args.time_steps, still=False)
 
 	def gen(df):
-		every = 3
-		counter = 0
-
 		while True:
-			for (inp, out) in df.get_data():
-				vids, mas, targs = next_video_batch(dset, batch_size)
-				videos, masks = [], []
-				targets = [[], [], [], [], [], []]
+			for i in df.get_data():
+				yield i
 
-				for ii in range(batch_size):
-					if ii % 2 == 0:
-						videos.append(inp[0][ii])
-						masks.append(inp[1][ii])
-						if args.format == 'last':
-							for jj in range(4):
-								targets[jj].append(out[jj][ii])
-							for jj in range(4, 6):
-								targets[jj].append(out[jj][ii][-1, :, :, :])
-						else:
-							for jj in range(6):
-								targets[jj].append(out[jj][ii])
-					else:
-						videos.append(vids[ii])
-						masks.append(mas[ii])
-						if args.format == 'last':
-							for jj in range(4):
-								targets[jj].append(targs[ii])
-							for jj in range(4, 6):
-								targets[jj].append(targs[ii][-1, :, :, :])
-						else:
-							for jj in range(6):
-								targets[jj].append(targs[ii])
-
-				videos = np.array(videos)
-				masks = np.array(masks)
-				for ii in range(6):
-					targets[ii] = np.array(targets[ii])
-
-				assert len(targets) == 6
-				yield [videos, masks], targets
-
-
-	DATA_DIR = '/beegfs/ua349/lstm/coco'
 	df = get_dataflow(
 		annot_path='%s/annotations/person_keypoints_%s2017.json' % (DATA_DIR, args.dataset),
 		img_dir='%s/%s2017/' % (DATA_DIR, args.dataset))
-	train_samples = df.size()
-	print('Collected %d val samples...' % train_samples)
-	train_df = batch_dataflow(df, batch_size, time_steps=args.time_steps)
+	train_df = batch_dataflow(df, batch_size)
 	train_gen = gen(train_df)
 
-	from snapshot import Snapshot
+	train_samples = df.size()
+	print(' [*] Collected %d val samples...' % train_samples)
 
-	non_ts = ['last']
-	sscb = Snapshot(
-		args.name,
-		train_gen,
-		time_series=True,
-		time_steps=args.time_steps,
-		time_format=args.format)
-	cblist = [lrate, sscb]
-	#cblist = [lrate]
+	print(model.input)
+	print(model.outputs)
+
+	loaded = 0
+	for layer in model.layers:
+		if isinstance(layer, Conv2D):
+			wmat = np.load('../tf/ver1/model/weights/%s_matrix.npy' % layer.name)
+			bias = np.load('../tf/ver1/model/weights/%s_bias.npy' % layer.name)
+			try:
+				layer.set_weights([wmat, bias])
+				loaded += 1
+			except:
+				print(' [x] failed to load: %s' % layer.name)
+
+	assert loaded != 0
+	print(' [*] Loaded %d weights' % loaded)
+
 	model.fit_generator(train_gen,
 		steps_per_epoch=train_samples // batch_size,
 		epochs=args.epochs,
-		callbacks=cblist,
+		callbacks=[lrate, Snapshot(args.name, train_gen)],
+		# callbacks=[lrate],
 		use_multiprocessing=False,
-		initial_epoch=0,
+		initial_epoch=args.last_epoch,
 		verbose=1)
-

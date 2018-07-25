@@ -1,11 +1,11 @@
 #!/bin/bash
 
-#SBATCH --job-name=heatmap
+#SBATCH --job-name=hmap-heatonly
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64GB
 #SBATCH --time=24:00:00
-#SBATCH --gres=gpu:p100:2
+#SBATCH --gres=gpu:p100:1
 
 echo "START"
 
@@ -21,5 +21,5 @@ module list
 echo "Loaded modules"
 nvidia-smi
 
-python still_train.py --gpus 2
+python heat_train.py --name v1 --dataset train --last_epoch 0 --epochs 5
 echo "Ended"

@@ -10,41 +10,41 @@ class Snapshot(keras.callbacks.Callback):
 	ecount = 0
 
 	def eval(self, save_name):
-		if self.functor is None:
-			inp = self.model.input
-			outputs = self.model.outputs[-2:]
-			self.functor = K.function(inp, outputs ) # evaluation function
 
 		images, heat_masks, targets = self.pbatch
 
-		layer_outs = self.functor(
-			[images, heat_masks]
-		)
+		results = self.model.predict([images, heat_masks])
+		results = results[-3][:, -1, :, :, :]
 
-		results = layer_outs[-1]
-
-
-		if not self.ts:
+		if not self.ts or self.time_format == 'last':
 			plt.figure(figsize=(14, 7))
-			for ii in range(5):
-				plt.subplot(2, 5, ii+1)
+			for ii in range(self.time_steps):
+				if ii == 0: plt.gca().set_title('Epoch: %d   Batch: %d' % (self.ecount, self.bcount))
+				plt.subplot(3, self.time_steps, ii+1)
 				plt.axis('off')
 				img = images[ii]
-				if self.ts:
+				if self.ts: # will be a tseries for last format
 					img = img[0]
-
 				plt.imshow(img.astype(np.float32)/255)
-			for ii in range(5):
-				plt.subplot(2, 5, 5+ii+1)
+
+			for ii in range(self.time_steps):
+				plt.subplot(3, self.time_steps, self.time_steps*1+ii+1)
 				plt.axis('off')
 				res = results[ii]
-				if self.ts:
-					res = res[0]
-				plt.imshow(np.sum(res[:, :, :-1], axis=-1), vmin=0, vmax=1)
+				# in last-format, output will be for 1 frame even though it is a tseries
+				plt.imshow(np.sum(res[:, :, :-1], axis=-1))
+
+			for ii in range(self.time_steps):
+				plt.subplot(3, self.time_steps, self.time_steps*2+ii+1)
+				plt.axis('off')
+				res = targets[ii]
+				plt.imshow(np.sum(res[:, :, :-1].astype(np.float32), axis=-1), vmin=0, vmax=1)
+
 		else:
 			plt.figure(figsize=(14, 10))
 			for ii in range(self.time_steps):
 				plt.subplot(3, self.time_steps, ii+1)
+				if ii == 0: plt.gca().set_title('Epoch: %d   Batch: %d' % (self.ecount, self.bcount))
 				plt.axis('off')
 				img = images[1][ii]
 				plt.imshow(img.astype(np.float32)/256)
@@ -63,7 +63,7 @@ class Snapshot(keras.callbacks.Callback):
 		plt.close()
 		# exit()
 
-	def __init__(self, tag, data_gen, every=100, time_series=False, time_steps=None):
+	def __init__(self, tag, data_gen, every=100, time_series=False, time_steps=None, time_format='last'):
 		self.tag = tag
 		self.validation_data = None
 		self.model = None
@@ -72,6 +72,7 @@ class Snapshot(keras.callbacks.Callback):
 		self.every = every
 		self.counter = 0
 		self.time_steps = time_steps
+		self.time_format = time_format
 
 		images = []
 		heat_masks = []
