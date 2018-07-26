@@ -266,9 +266,9 @@ def mod_v1(time_steps=4, imsize=368, outsize=46, weight_decay = 5e-4):
 
 	return model
 
-def mod_v2(time_steps=4, imsize=368, outsize=46, weight_decay = 5e-4):
-	img_input_shape = (time_steps, imsize, imsize, 3)
-	heat_mask_shape = (time_steps, outsize, outsize, 19)
+def mod_v2(time_steps=4, imsize=368, outsize=46, weight_decay = 5e-4, trainable=True):
+	img_input_shape = (time_steps, None, None, 3)
+	heat_mask_shape = (time_steps, None, None, 19)
 
 	inputs = []
 	outputs = []
@@ -277,7 +277,8 @@ def mod_v2(time_steps=4, imsize=368, outsize=46, weight_decay = 5e-4):
 	heat_weight_input = Input(shape=heat_mask_shape)
 
 	inputs.append(img_input)
-	inputs.append(heat_weight_input)
+	if trainable:
+		inputs.append(heat_weight_input)
 
 	img_normalized = TimeDistributed(Lambda(lambda x: x / 256 - 0.5))(img_input) # [-0.5, 0.5]
 
@@ -286,8 +287,9 @@ def mod_v2(time_steps=4, imsize=368, outsize=46, weight_decay = 5e-4):
 
 	# stage 1 - branch 2 (confidence maps)
 	stage1_branch2_out = stage1_block(stage0_out, np_branch2, 2, weight_decay, rnn=True)
-	w2 = apply_mask(stage1_branch2_out, heat_weight_input, np_branch2, 1, 2)
-	outputs.append(w2)
+	if trainable:
+		w2 = apply_mask(stage1_branch2_out, heat_weight_input, np_branch2, 1, 2)
+		outputs.append(w2)
 
 	x = Concatenate()([stage1_branch2_out, stage0_out])
 	# print('Concat shape:', x.get_shape())
@@ -299,20 +301,26 @@ def mod_v2(time_steps=4, imsize=368, outsize=46, weight_decay = 5e-4):
 		if sn < stages - 1:
 			stageT_branch2_out = stageT_block_lstm(x, np_branch2, sn, 2, weight_decay)
 			x = Concatenate()([stageT_branch2_out, stage0_out])
-			w2 = apply_mask(stageT_branch2_out, heat_weight_input, np_branch2, sn, 2)
-			outputs.append(w2)
+			if trainable:
+				w2 = apply_mask(stageT_branch2_out, heat_weight_input, np_branch2, sn, 2)
+				outputs.append(w2)
 
 		if sn == stages - 1:
 			stageT_branch2_out = stageJoin_block_lstm(x, np_branch2, sn, 2, weight_decay)
 			x = Concatenate()([stageT_branch2_out, get_last(stage0_out)])
-			w2 = apply_mask(stageT_branch2_out, get_last(heat_weight_input), np_branch2, sn, 2)
-			outputs.append(w2)
+			if trainable:
+				w2 = apply_mask(stageT_branch2_out, get_last(heat_weight_input), np_branch2, sn, 2)
+				outputs.append(w2)
 
 		elif sn == stages:
 			stageT_branch2_out = stageT_block(x, np_branch2, sn, 2, weight_decay, rnn=False)
-			w2 = apply_mask(stageT_branch2_out, get_last(heat_weight_input), np_branch2, sn, 2)
-			outputs.append(w2)
+			if trainable:
+				w2 = apply_mask(stageT_branch2_out, get_last(heat_weight_input), np_branch2, sn, 2)
+				outputs.append(w2)
 
-	model = Model(inputs=inputs, outputs=outputs)
+	if trainable:
+		model = Model(inputs=inputs, outputs=outputs)
+	else:
+		model = Model(inputs=inputs, outputs=[stageT_branch2_out])
 
 	return model
