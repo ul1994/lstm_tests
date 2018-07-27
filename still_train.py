@@ -20,7 +20,7 @@ from keras.callbacks import LearningRateScheduler, ModelCheckpoint, CSVLogger, T
 from keras.utils import multi_gpu_model as multigpu
 
 from components import *
-sys.path.append('/scratch/ua349/pose/tf/ver1')
+sys.path.append('../tf/ver1')
 from training.optimizers import MultiSGD
 from training.dataset import get_dataflow
 
@@ -59,15 +59,17 @@ def batch_dataflow(df, batch_size, time_steps=4, num_stages=6, format=['heatpaf'
 			np.stack([x[3]] * time_steps, axis=1),
 			np.stack([x[4]] * time_steps, axis=1),
 			np.stack([x[3]] * time_steps, axis=1),
-			np.stack([x[4]] * time_steps, axis=1),
-			np.stack([x[3]] * time_steps, axis=1),
-			np.stack([x[4]] * time_steps, axis=1),
+			np.stack([x[4]] * time_steps, axis=1), # TD layers end here
 
-			np.stack([x[3]] * time_steps, axis=1),
-			np.stack([x[4]] * time_steps, axis=1),
+			x[3], # TD layers are joined here by LSTM
+			x[4],
 
 			x[3], # these last outputs collapse to one timestep output
 			x[4],
+
+			x[3],
+			x[4],
+
 			x[3],
 			x[4],
 		]
@@ -167,6 +169,42 @@ def get_loss_funcs(batch_size):
 	losses["weight_stage6_L2"] = _eucl_loss
 	return losses
 
+def load_any_weights(model, multigpu=True):
+	loaded = 0
+	failed = 0
+	badlist = []
+	if multigpu:
+		model_find = [layer for layer in model.layers if type(layer) == Model]
+		assert len(model_find) == 1
+		model = model_find[0]
+
+	for layer in model.layers:
+		if type(layer) == Conv2D or (hasattr(layer, 'layer') and type(layer.layer) == Conv2D):
+			if hasattr(layer, 'layer'): layer = layer.layer
+
+			wfile = layer.name + '_matrix.npy'
+			bfile = layer.name + '_bias.npy'
+
+			wmat = np.load('../tf/ver1/model/weights/%s' % wfile)
+			bias = np.load('../tf/ver1/model/weights/%s' % bfile)
+
+			try:
+				layer.set_weights([wmat, bias])
+				loaded += 1
+			except:
+				failed += 1
+				# print(layer.get_weights()[0].shape, wmat.shape)
+				badlist.append((type(layer), layer.name))
+		# else:
+		# 	failed += 1
+		# 	badlist.append((type(layer), layer.name))
+	print('Loaded %d layers (mismatch: %d)' % (loaded, failed))
+	assert loaded > 0
+
+	for name in badlist:
+		print('-', name)
+	# exit(1)
+
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--name', type=str, required=True)
@@ -211,41 +249,7 @@ if __name__ == '__main__':
 	loss_funcs = get_loss_funcs(batch_size)
 	model.compile(loss=loss_funcs, optimizer=multisgd, metrics=["accuracy"])
 
-	mono_model = heat_v1()
-	mono_model.load_weights('checkpoints/v1-epoch_0.h5')
-
-	loaded = 0
-	from keras.layers import ConvLSTM2D
-	for layer in mono_model.layers:
-		if isinstance(layer, Conv2D):
-
-			for targ in model.layers:
-				if isinstance(targ, TimeDistributed) and isinstance(targ.layer, Conv2D):
-					targ = targ.layer
-					if targ.name == layer.name:
-						try:
-							targ.set_weights(layer.get_weights())
-							loaded +=1
-						except:
-							print(layer.name)
-							# print(layer.get_shape())
-							# print(targ.get_shape())
-							raise Exception('Could not set')
-				elif isinstance(targ, ConvLSTM2D):
-					pass
-					# if targ.name == layer.name:
-					# 	triple = targ.get_weights()
-					# 	try:
-					# 		targ.set_weights([layer.get_weights()[0], layer.get_weights()[1], triple[-1]])
-					# 		loaded +=1
-					# 	except:
-					# 		print(layer.name)
-					# 		print(layer.get_weights()[0].shape)
-					# 		for ii in range(3):
-					# 			print(ii, targ.get_weights()[ii].shape)
-					# 		raise Exception('Could not set')
-
-	print(' [*] Loaded %d weights' % loaded)
+	load_any_weights(model, multigpu=args.gpus > 1)
 
 	df = get_dataflow(
 		annot_path='%s/annotations/person_keypoints_%s2017.json' % (DATA_DIR, args.dataset),

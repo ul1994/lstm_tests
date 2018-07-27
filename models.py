@@ -377,20 +377,20 @@ def mod_v3(time_steps=4, imsize=368, outsize=46, weight_decay=5e-4, trainable=Tr
 	# stage sn >= 2
 	get_last = Lambda(lambda tensor: tensor[:, time_steps-1, :, :, :])
 	for sn in range(2, stages + 1):
-		if sn < stages - 1:
+		if sn == 2:
 			# stage SN - branch 1 (PAF)
-			stageT_branch1_out = stageT_block_lstm(x, np_branch1, sn, 1, weight_decay)
+			stageT_branch1_out = stageT_block(x, np_branch1, sn, 1, weight_decay, rnn=True)
 			w1 = apply_mask_full(stageT_branch1_out, vec_mask, heat_mask, np_branch1, sn, 1)
 
 			# stage SN - branch 2 (confidence maps)
-			stageT_branch2_out = stageT_block_lstm(x, np_branch2, sn, 2, weight_decay)
+			stageT_branch2_out = stageT_block(x, np_branch2, sn, 2, weight_decay, rnn=True)
 			w2 = apply_mask_full(stageT_branch2_out, vec_mask, heat_mask, np_branch2, sn, 2)
 
 			outputs.append(w1)
 			outputs.append(w2)
 			x = Concatenate()([stageT_branch1_out, stageT_branch2_out, stage0_out])
 
-		elif sn == stages - 1:
+		elif sn == 3:
 			# stage SN - branch 1 (PAF)
 			stageT_branch1_out = stageJoin_block_lstm(x, np_branch1, sn, 1, weight_decay)
 			w1 = apply_mask_full(stageT_branch1_out, get_last(vec_mask), get_last(heat_mask), np_branch1, sn, 1)
@@ -403,7 +403,7 @@ def mod_v3(time_steps=4, imsize=368, outsize=46, weight_decay=5e-4, trainable=Tr
 			outputs.append(w2)
 			x = Concatenate()([stageT_branch1_out, stageT_branch2_out, get_last(stage0_out)])
 
-		elif sn == stages:
+		elif sn > 3:
 			# stage SN - branch 1 (PAF)
 			stageT_branch1_out = stageT_block(x, np_branch1, sn, 1, weight_decay, rnn=False)
 			w1 = apply_mask_full(stageT_branch1_out, get_last(vec_mask), get_last(heat_mask), np_branch1, sn, 1)
@@ -411,9 +411,24 @@ def mod_v3(time_steps=4, imsize=368, outsize=46, weight_decay=5e-4, trainable=Tr
 			# stage SN - branch 2 (confidence maps)
 			stageT_branch2_out = stageT_block(x, np_branch2, sn, 2, weight_decay, rnn=False)
 			w2 = apply_mask_full(stageT_branch2_out, get_last(vec_mask), get_last(heat_mask), np_branch2, sn, 2)
+			if sn != stages:
+				x = Concatenate()([stageT_branch1_out, stageT_branch2_out, get_last(stage0_out)])
 
 			outputs.append(w1)
 			outputs.append(w2)
+
+		# stage SN - branch 1 (PAF)
+		# stageT_branch1_out = stageT_block(x, np_branch1, sn, 1, weight_decay, rnn=True)
+		# w1 = apply_mask_full(stageT_branch1_out, get_last(vec_mask), get_last(heat_mask), np_branch1, sn, 1)
+
+		# # stage SN - branch 2 (confidence maps)
+		# stageT_branch2_out = stageT_block(x, np_branch2, sn, 2, weight_decay, rnn=True)
+		# w2 = apply_mask_full(stageT_branch2_out, get_last(vec_mask), get_last(heat_mask), np_branch2, sn, 2)
+		# if sn != stages:
+		# 	x = Concatenate()([stageT_branch1_out, stageT_branch2_out, stage0_out])
+
+		# outputs.append(w1)
+		# outputs.append(w2)
 
 	model = Model(inputs=inputs, outputs=outputs)
 

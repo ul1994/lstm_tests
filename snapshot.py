@@ -36,7 +36,7 @@ class Snapshot(keras.callbacks.Callback):
 					heat = results[-1][ii]
 				else:
 					raise Exception('Not supported')
-				plt.imshow(np.sum(heat[:, :, :-1].astype(np.float32), axis=-1), vmin=0, vmax=1)
+				plt.imshow(np.sum(heat[:, :, :-1].astype(np.float32), axis=-1))
 			for ii in range(NSHOW):
 				plt.subplot(3, NSHOW, NSHOW*2+ii+1)
 				plt.axis('off')
@@ -44,7 +44,7 @@ class Snapshot(keras.callbacks.Callback):
 					target = outs[-1][ii]
 				else:
 					raise Exception('Not supported')
-				plt.imshow(np.sum(target[:, :, :-1].astype(np.float32), axis=-1), vmin=0, vmax=1)
+				plt.imshow(np.sum(target[:, :, :-1].astype(np.float32), axis=-1))
 		else:
 			raise Exception('Not implemented')
 
@@ -93,7 +93,7 @@ class Snapshot(keras.callbacks.Callback):
 
 		plt.savefig('previews/%s' % save_name, bbox_inches='tight')
 		plt.close()
-		exit()
+		# exit()
 
 	def __init__(self, tag, data_gen, format, every=100, stills=False):
 		self.tag = tag
@@ -122,6 +122,8 @@ class Snapshot(keras.callbacks.Callback):
 
 
 		self.eval('%s-%s_%s.png' % (self.tag, self.ecount, self.bcount))
+		# keep saving weights every eval
+		self.model.save_weights('checkpoints/%s-epoch_%d.h5' % (self.tag, self.ecount))
 		self.counter = 1
 		self.bcount += 1
 
