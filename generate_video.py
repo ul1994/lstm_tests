@@ -1,12 +1,17 @@
+import matplotlib as mpl
+mpl.use('Agg')
+
+import os, sys
+import cv2
+from scipy.io import loadmat
+from random import shuffle
+sys.path.append('../tf/ver1')
+from training.label_maps import _put_paf_on_plane, _put_heatmap_on_plane
 
 DATA_DIR = "/beegfs/ua349/lstm/Penn_Action"
 
 frames_dir = DATA_DIR + '/frames'
 labels_dir = DATA_DIR + '/labels'
-
-import os, sys
-from scipy.io import loadmat
-from random import shuffle
 
 def gather_videos(SEQ_LEN = 4, still=False, speedup=2):
 	refs = []
@@ -195,7 +200,7 @@ def create_mask(bbox, spec, size=46, dims =19, coords=None, buffer=1):
 
 	return canvas
 
-def next_video_batch(refs, bsize=6):
+def next_video_batch(refs, bsize=6, format='heatpaf'):
 	brefs = refs[0][:bsize]
 	refs[0] = refs[0][bsize:]
 
@@ -207,6 +212,8 @@ def next_video_batch(refs, bsize=6):
 	videos = []
 	masks = []
 	targets = []
+	if  format == 'heatpaf':
+		targets = [[], []]
 
 	for ref in brefs:
 		zoom = 1 / random.uniform(1.0, 1.25) # x1.5 ~ x2.0
@@ -222,13 +229,45 @@ def next_video_batch(refs, bsize=6):
 
 		videos.append(sized)
 		masks.append(mask)
-		targets.append(heats)
+
+		if format == 'heatpaf':
+			targets[0].append(heats)
 
 	return (
 		np.array(videos),
 		np.array(masks),
-		np.array(targets))
+		np.array(masks)
+	), (
+		np.array(targets[0]),
+		np.array(targets[1]),
+	)
 
+if __name__ == '__main__':
+	import matplotlib.pyplot as plt
 
+	dset = gather_videos(SEQ_LEN=4, still=False)
 
+	(frames, masks, _), (heats, pafs) = next_video_batch(dset, 10)
 
+	FIRST = 0
+	SEQ = 4
+	plt.figure(figsize=(14, 10))
+
+	for ii in range(SEQ):
+		plt.subplot(3, SEQ, ii+1)
+		img = frames[FIRST][ii].astype(np.float32)/256
+		plt.imshow(img)
+		msk = cv2.resize(masks[FIRST][ii][:, :, FIRST], (0,0), fx=8, fy=8)
+		plt.imshow(msk, alpha=0.25)
+
+	for ii in range(SEQ):
+		plt.subplot(3, SEQ, SEQ+ii+1)
+		img = np.sum(heats[FIRST][ii][:, :, :-1], axis=-1)
+		plt.imshow(img)
+
+	for ii in range(SEQ):
+		plt.subplot(3, SEQ, 2*SEQ+ii+1)
+		img = np.sum(pafs[FIRST][ii][:, :, :], axis=-1)
+		plt.imshow(img)
+
+	plt.savefig('generate.png')
