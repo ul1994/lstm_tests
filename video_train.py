@@ -141,6 +141,7 @@ if __name__ == '__main__':
 		'conv_v2': conv_v2,
 		'mod_v1': mod_v1,
 		'mod_v2': mod_v2,
+		'mod_v3': mod_v3,
 	}
 
 	model = archs[args.arch](time_steps=args.time_steps)

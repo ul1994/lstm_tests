@@ -35,23 +35,63 @@ stepsize = 136106 #68053   // after each stepsize iterations update learning rat
 
 DATA_DIR = '/beegfs/ua349/lstm/coco'
 
-def batch_dataflow(df, batch_size, time_steps=4, num_stages=6):
-		"""
-		The function builds batch dataflow from the input dataflow of samples
+def batch_dataflow(df, batch_size, time_steps=4, num_stages=6, format=['heatpaf', 'last']):
+	informat, outformat = format
 
-		:param df: dataflow of samples
-		:param batch_size: batch size
-		:return: dataflow of batches
-		"""
-		df = BatchData(df, batch_size, use_list=False)
+
+	df = BatchData(df, batch_size, use_list=False)
+
+	def in_heat(x):
+		return [
+			np.stack([x[0]] * time_steps, axis=1),
+			np.stack([x[2]] * time_steps, axis=1)
+		]
+	def in_heatpaf(x):
+		return [
+			np.stack([x[0]] * time_steps, axis=1),
+			np.stack([x[1]] * time_steps, axis=1),
+			np.stack([x[2]] * time_steps, axis=1)
+		]
+	def out_heat_last(x):
+		return [np.stack([x[4]] * time_steps, axis=1)] * num_stages
+	def out_heatpaf_last(x):
+		return [
+			np.stack([x[3]] * time_steps, axis=1),
+			np.stack([x[4]] * time_steps, axis=1),
+			np.stack([x[3]] * time_steps, axis=1),
+			np.stack([x[4]] * time_steps, axis=1),
+			np.stack([x[3]] * time_steps, axis=1),
+			np.stack([x[4]] * time_steps, axis=1),
+
+			np.stack([x[3]] * time_steps, axis=1),
+			np.stack([x[4]] * time_steps, axis=1),
+
+			x[3], # these last outputs collapse to one timestep output
+			x[4],
+			x[3],
+			x[4],
+		]
+
+	if informat == 'heat' and outformat == 'last':
 		df = MapData(df, lambda x: (
-			[
-				np.stack([x[0]] * time_steps, axis=1),
-				np.stack([x[2]] * time_steps, axis=1)
-			],
-			[np.stack([x[4]] * time_steps, axis=1)] * num_stages))
-		df.reset_state()
-		return df
+			heat_only(x),
+			out_heat_last(x)
+		))
+	elif informat == 'heatpaf' and outformat == 'last':
+		df = MapData(df, lambda x: (
+			in_heatpaf(x),
+			out_heatpaf_last(x)
+		))
+	else:
+		raise Exception('Unknown format requested: %s' % format)
+
+	df.reset_state()
+	return df
+
+def gen(df):
+		while True:
+			for i in df.get_data():
+				yield i
 
 def get_lr_multipliers(model):
 	"""
@@ -113,13 +153,18 @@ def get_loss_funcs(batch_size):
 		return K.sum(K.square(x - y)) / batch_size / 2
 
 	losses = {}
+	losses["weight_stage1_L1"] = _eucl_loss
 	losses["weight_stage1_L2"] = _eucl_loss
+	losses["weight_stage2_L1"] = _eucl_loss
 	losses["weight_stage2_L2"] = _eucl_loss
+	losses["weight_stage3_L1"] = _eucl_loss
 	losses["weight_stage3_L2"] = _eucl_loss
+	losses["weight_stage4_L1"] = _eucl_loss
 	losses["weight_stage4_L2"] = _eucl_loss
+	losses["weight_stage5_L1"] = _eucl_loss
 	losses["weight_stage5_L2"] = _eucl_loss
+	losses["weight_stage6_L1"] = _eucl_loss
 	losses["weight_stage6_L2"] = _eucl_loss
-
 	return losses
 
 if __name__ == '__main__':
@@ -127,6 +172,7 @@ if __name__ == '__main__':
 	parser.add_argument('--name', type=str, required=True)
 	parser.add_argument('--arch', default='conv_v1', type=str)
 	parser.add_argument('--dataset', default='train', type=str)
+	parser.add_argument('--format', default='sequence', required=True, type=str)
 
 	parser.add_argument('--epochs', default=5, type=int)
 	parser.add_argument('--time_steps', default=4, type=int)
@@ -136,9 +182,10 @@ if __name__ == '__main__':
 	parser.add_argument('--count', default=False, type=bool)
 	args = parser.parse_args()
 
+	__format = args.format.split('|')
 	batch_size = args.batch
 
-	model = conv_v2(time_steps=args.time_steps)
+	model = MODELS[args.arch](time_steps=args.time_steps)
 
 	if args.count:
 		model.summary()
@@ -200,17 +247,12 @@ if __name__ == '__main__':
 
 	print(' [*] Loaded %d weights' % loaded)
 
-	def gen(df):
-		while True:
-			for i in df.get_data():
-				yield i
-
 	df = get_dataflow(
 		annot_path='%s/annotations/person_keypoints_%s2017.json' % (DATA_DIR, args.dataset),
 		img_dir='%s/%s2017/' % (DATA_DIR, args.dataset))
 	train_samples = df.size()
 	print('Collected %d val samples...' % train_samples)
-	train_df = batch_dataflow(df, batch_size, time_steps=args.time_steps)
+	train_df = batch_dataflow(df, batch_size, time_steps=args.time_steps, format=__format)
 	train_gen = gen(train_df)
 
 	print(model.inputs[0].get_shape())
@@ -221,7 +263,7 @@ if __name__ == '__main__':
 	model.fit_generator(train_gen,
 		steps_per_epoch=train_samples // batch_size,
 		epochs=args.epochs,
-		callbacks=[lrate, Snapshot(args.name, train_gen, time_series=True)],
+		callbacks=[lrate, Snapshot(args.name, train_gen, __format, stills=True)],
 		use_multiprocessing=False,
 		initial_epoch=0,
 		verbose=1)
