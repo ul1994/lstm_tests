@@ -158,26 +158,54 @@ def create_mask(dims, height, width, bbox, stride=8, pad=1):
 	return canvas
 
 def augment(imgs, zoom, xoff, yoff, bbox, stride=1):
-	imgs = np.array(imgs)
-	# xoff = xoff / stride
-	# yoff = yoff / stride
 	FIRST = 0
+	xoff = xoff / stride
+	yoff = yoff / stride
 
-	width = imgs[FIRST].shape[1]
-	height = imgs[FIRST].shape[0]
-	x0, y0, xf, yf = np.array(bbox[FIRST]) / stride
-	boxX, boxY = (x0 + xf) / 2, (y0 + yf) / 2
-	cX = width / 2 - boxX
-	cY = height / 2 - boxY
+	imgs = np.array(imgs)
+	sized = [cv2.resize(img.astype(np.float32), (0,0), fx=zoom, fy=zoom) for img in imgs]
+	sized = np.array(sized).astype(imgs[FIRST].dtype)
 
 	canvas = np.zeros(imgs.shape, dtype=imgs.dtype)
-	fill = canvas[:, max(0, int(cY)):int(cY+height), max(0, int(cX)):int(cX+width), :]
-	subj = imgs[:, :fill.shape[1], :fill.shape[2], :]
+	canv_width = canvas[FIRST].shape[1]
+	canv_height = canvas[FIRST].shape[0]
+	x0, y0, xf, yf = np.array(bbox[FIRST]) / stride # bbox affected by zoom
+	x0 = x0 * zoom + imgs[FIRST].shape[1] * (1 - zoom) / 2
+	xf = xf * zoom + imgs[FIRST].shape[1] * (1 - zoom) / 2
+	y0 = y0 * zoom + imgs[FIRST].shape[0] * (1 - zoom) / 2
+	yf = yf * zoom + imgs[FIRST].shape[0] * (1 - zoom) / 2
 
-	# print(canvas.shape, fill.shape, subj.shape, (boxX, boxY), (width/2, height/2), (cX, cY))
-	try:
-		assert fill.shape == subj.shape
+	boxX, boxY = (x0 + xf) / 2, (y0 + yf) / 2
+	cX = canv_width / 2 - boxX + xoff
+	cY = canv_height / 2 - boxY + yoff
+
+	width = sized[FIRST].shape[1]
+	height = sized[FIRST].shape[0]
+
+	fill_Y0 = max(0, cY)
+	fill_YF = min(height, cY+height)
+	fill_X0 = max(0, cX)
+	fill_XF = min(width, cX+width)
+
+	subj_Y0 = max(0, -cY)
+	subj_YF = min(height, -cY+height)
+	subj_X0 = max(0, -cX)
+	subj_XF = min(width, -cX+width)
+
+	try: assert fill_YF - fill_Y0 == subj_YF - subj_Y0
+	except: raise Exception('Y: %.2f != %.2f' % (fill_YF - fill_Y0, subj_YF - subj_Y0))
+	try: assert fill_XF - fill_X0 == subj_XF - subj_X0
+	except: raise Exception('X: %.2f != %.2f' % (fill_XF - fill_X0, subj_XF - subj_X0))
+
+	fill = canvas[:, int(fill_Y0):int(fill_YF), int(fill_X0):int(fill_XF), :]
+	subj = sized[:, int(subj_Y0):int(subj_Y0)+fill.shape[1], int(subj_X0):int(subj_X0)+fill.shape[2], :]
+
+	try: assert fill.shape == subj.shape
 	except:
+		print(cX, cY)
+		print(xoff, yoff)
+		print(fill_YF, fill_Y0, subj_YF, subj_Y0)
+		print(fill_XF, fill_X0, subj_XF, subj_X0)
 		raise Exception('ERR: %s -> %s' % (subj.shape, fill.shape))
 
 	fill[:, :, :, :] = subj[:, :, :, :]
@@ -211,9 +239,12 @@ def next_video_batch(refs, bsize=6, format='heatpaf'):
 			mask_heats.append(create_mask(19, width, height, ref['boxes'][frame_ii]))
 			mask_pafs.append(create_mask(38, width, height, ref['boxes'][frame_ii]))
 
-		randZoom = random.uniform(0.5, 1.5)
-		# randX = random.uniform(-92, 92)
-		# randY = random.uniform(-92, 92)
+		# randZoom = random.uniform(0.25, 0.5)
+		randZoom = random.uniform(0.5, 0.5)
+		randX = random.uniform(-92, 92)
+		randY = random.uniform(-92, 92)
+
+		randZoom = 0.75
 		randX = 0
 		randY = 0
 
