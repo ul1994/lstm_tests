@@ -14,14 +14,28 @@ DATA_DIR = "/beegfs/ua349/lstm/Penn_Action"
 frames_dir = DATA_DIR + '/frames'
 labels_dir = DATA_DIR + '/labels'
 
-def gather_videos(SEQ_LEN = 4, still=False, speedup=2):
+def gather_videos(SEQ_LEN = 4, still=False, speedup=2, shuffle=True):
 	refs = []
 
 
 	# [nose, neck, Rsho, Relb, Rwri, Lsho, Lelb, Lwri, Rhip, Rkne, Rank, Lhip, Lkne, Lank, Leye, Reye, Lear, Rear, pt19]
-	# coco_incl = [0, None, 1, 3, 5, 2, 4, 6, 7, 9, 11, 8, 10, 12, None, None, None, None, None]
 	coco_incl = [0, None, 1, 3, 5, 2, 4, 6, 7, 9, 11, 8, 10, 12, None, None, None, None]
-	# TODO: 19th entry should be a maskish thing...?
+
+	def approx_neck(coords):
+		NECK_IND = 1
+		rsho, lsho = coords[2], coords[5]
+
+		if rsho is None or lsho is None:
+			return None
+
+		for ent in [rsho[0], rsho[1], lsho[0], lsho[1]]:
+			if ent == -1:
+				return None
+
+		coords[NECK_IND] = [
+			(rsho[0] + lsho[0])/2,
+			(rsho[1] + lsho[1])/2
+		]
 
 	frame_folders = os.listdir(frames_dir)
 	for __fii, fldr in enumerate(sorted(frame_folders, key=lambda val: int(val))):
@@ -43,9 +57,7 @@ def gather_videos(SEQ_LEN = 4, still=False, speedup=2):
 		for bii in range(0, end, SEQ_LEN):
 			ref = {
 				'frames': [],
-	#             'labels': [],
 				'boxes': [],
-	#             'local_coords': [],
 				'coords': [],
 				'coco_coords': [],
 				'visibility': [],
@@ -82,13 +94,16 @@ def gather_videos(SEQ_LEN = 4, still=False, speedup=2):
 
 					if xx == 0 or yy == 0:
 						# invalid coord
-						coords.append((-1, -1))
+						coords.append(None)
 					else:
 						coords.append((xx, yy))
 
 				ref['coords'].append(coords)
+
 				coco_coords = [None if ind is None else coords[ind] for ind in coco_incl]
+				approx_neck(coco_coords)
 				ref['coco_coords'].append(coco_coords)
+
 				ref['visibility'].append(vis[ii])
 			assert len(ref['frames']) == SEQ_LEN
 			assert len(ref['coords']) == SEQ_LEN
@@ -96,13 +111,15 @@ def gather_videos(SEQ_LEN = 4, still=False, speedup=2):
 
 			refs.append(ref)
 	shuffed = refs
-	shuffle(shuffed)
+	if shuffle:
+		shuffle(shuffed)
 	return [shuffed, refs]
 
 import cv2
 from cv2 import imread
 import numpy as np
 import random
+
 def size_image(img, bbox, zoom, size=368):
 	img = img.astype(np.float32)
 
@@ -133,96 +150,6 @@ def size_image(img, bbox, zoom, size=368):
 
 	# for frame in range()
 
-from scipy.ndimage import gaussian_filter as blur
-
-# def create_heatmaps(coords, spec, size=46,dims=19):
-# def create_heatmaps(coords, size=46,dims=19):
-# 	# (zoom, targ, (x0, y0), (dx, dy)) = spec
-# 	canvas = np.zeros((size, size, dims))
-
-# 	# for ii, coord in enumerate(coords):
-# 	for plane_idx, coord in enumerate(coords):
-# 		if coord is None:
-# 			continue
-
-# 		(xx, yy) = coord
-# 		if xx == -1 or yy == -1:
-# 			# invalid coord - DNE in image
-# 			continue
-
-# 		# shrink = size / 368
-# 		# rx = int((dx + (xx - x0) / zoom) * shrink)
-# 		# ry = int((dy + (yy - y0) / zoom) * shrink)
-
-# 		# if rx >= size or ry >= size:
-# 		# 	continue
-# 		# if rx < 0 or ry < 0:
-# 		# 	continue
-
-# 		_put_heatmap_on_plane(canvas, plane_idx, coord,
-# 			7.0, size, size, stride=8)
-
-# 		# canvas[ry, rx, ii] = 1
-# 		# img = blur(canvas[:, :, ii], sigma=1)
-# 		# canvas[:, :, ii] = img / np.max(img)
-
-# 		# canvas[ry, rx, -1] = 1 # sum mask
-
-# 	# assert np.max(canvas[:, :, -1]) <= 1.0
-# 	# img = blur(canvas[:, :, -1], sigma=1)
-# 	# img /= np.max(img)
-# 	# inv = 1 - img
-# 	# canvas[:, :, -1] = inv
-
-# 	return canvas
-
-# def create_pafs(coords, size=46, dims=38):
-# 	canvas = np.zeros((size, size, dims))
-
-# 	for plane_idx, coord in enumerate(coords):
-# 		if coord is None:
-# 			continue
-
-# 		(xx, yy) = coord
-# 		if xx == -1 or yy == -1:
-# 			# invalid coord - DNE in image
-# 			continue
-
-# 		_put_heatmap_on_plane(canvas, plane_idx, coord,
-# 			7.0, size, size, stride=8)
-
-# 	return canvas
-
-# def create_mask(bbox, spec, size=46, dims =19, coords=None, buffer=1):
-# 	(zoom, targ, (x0, y0), (dx, dy)) = spec
-# 	canvas = np.zeros((size, size, dims))
-
-# 	shrink = size / 368
-# 	xS, yS, xF, yF = bbox
-
-# 	xS = int((dx + (xS - x0) / zoom) * shrink)
-# 	yS = int((dy + (yS - y0) / zoom) * shrink)
-
-# 	xF = int((dx + (xF - x0) / zoom) * shrink)
-# 	yF = int((dy + (yF - y0) / zoom) * shrink)
-
-# 	# print(spec)
-# 	# print(xS, xF, yS, yF)
-# 	# assert False
-# 	for ii in range(dims):
-# 		# canvas[y0:yF, x0:xF, ii] = 1
-# 		canvas[max(yS-buffer, 0):yF+buffer, max(xS-buffer, 0):xF+buffer, ii] = 1
-
-# 	if coords is not None:
-# 		# zero out joints that are missing from PENN via masking
-# 		for ii, joint in enumerate(coords):
-# 			if joint is None:
-# 				canvas[:, :, ii] = 0
-
-# 	# canvas[:, :, -1] = 0 # ignore final by masking it out
-
-# 	return canvas
-
 def next_video_batch(refs, bsize=6, format='heatpaf'):
 	brefs = refs[0][:bsize]
 	refs[0] = refs[0][bsize:]
@@ -239,18 +166,26 @@ def next_video_batch(refs, bsize=6, format='heatpaf'):
 	for ref in brefs:
 		zoom = 1 / random.uniform(1.0, 1.25) # x1.5 ~ x2.0
 		# sized, specs = zip(*[size_image(imread(path), ref['boxes'][ii], zoom) for ii, path in enumerate(ref['frames'])])
-		sized = [imread(path) for ii, path in enumerate(ref['frames'])]
 
-		heats = [create_heatmap(19, 46, 46, [ref['coco_coords'][ii]], sigma=7.0, stride=8) for ii in range(len(ref['frames']))]
-		pafs = [create_paf(19, 46, 46, [ref['coco_coords'][ii]], threshold=1.0, stride=8) for ii in range(len(ref['frames']))]
+		imgs, heats, pafs, mask_heats, mask_pafs = [], [], [], [], []
+		for ii in range(len(ref['frames'])):
+			img = imread(ref['frames'][ii])
+			imgs.append(img)
 
-		mask_heats = [np.ones((46, 46, 19)) for ii in range(len(ref['frames']))]
-		mask_pafs = [np.ones((46, 46, 38)) for ii in range(len(ref['frames']))]
+			sy, sx = int(img.shape[0] / 8), int(img.shape[1] / 8)
+
+			heats.append(create_heatmap(19, sy, sx, [ref['coco_coords'][ii]], sigma=7.0, stride=8))
+			pafs.append(create_paf(38, sy, sx, [ref['coco_coords'][ii]], threshold=1.0, stride=8))
+
+			mask_heats.append(np.ones((sy, sx, 19)))
+			mask_pafs.append(np.ones((sy, sx, 38)))
 
 		# TODO: mask all except final
 		# for ii in range(len(ref['frames'])):
 		# 	# heats[ii][:, :, :-1] = np.multiply(heats[ii][:, :, :-1], mask[ii][:, :, :-1])
 		# 	heats[ii][:, :, :] = np.multiply(heats[ii][:, :, :], mask[ii][:, :, :])
+
+		sized = imgs
 
 		videos.append(sized)
 		masks[0].append(mask_heats)
@@ -270,7 +205,7 @@ def next_video_batch(refs, bsize=6, format='heatpaf'):
 if __name__ == '__main__':
 	import matplotlib.pyplot as plt
 
-	dset = gather_videos(SEQ_LEN=4, still=False)
+	dset = gather_videos(SEQ_LEN=4, still=False, shuffle=False)
 
 	(frames, masks, _), (pafs, heats) = next_video_batch(dset, 10)
 
@@ -283,19 +218,25 @@ if __name__ == '__main__':
 		plt.axis('off')
 		img = frames[FIRST][ii].astype(np.float32)/256
 		plt.imshow(img)
-		# msk = cv2.resize(masks[FIRST][ii][:, :, FIRST], (0,0), fx=8, fy=8)
-		# plt.imshow(msk, alpha=0.25)
+		msk = cv2.resize(masks[FIRST][ii][:, :, FIRST], (0,0), fx=8, fy=8)
+		plt.imshow(msk, alpha=0.25)
 
 	for ii in range(SEQ):
 		plt.subplot(3, SEQ, SEQ+ii+1)
 		plt.axis('off')
 		img = np.sum(heats[FIRST][ii][:, :, :-1], axis=-1).astype(np.float32)
 		plt.imshow(img)
+		plt.imshow(masks[FIRST][ii][:, :, 0], alpha=0.25)
 
 	for ii in range(SEQ):
 		plt.subplot(3, SEQ, 2*SEQ+ii+1)
 		plt.axis('off')
-		img = np.sum(pafs[FIRST][ii][:, :, :], axis=-1).astype(np.float32)
+		sy, sx, _ = pafs[FIRST][ii].shape
+		canvas = np.zeros((sy, sx))
+		for dd in range(38):
+			plane = pafs[FIRST][ii][:, :, dd]
+			canvas[plane > 0] = plane[plane > 0]
+		img = canvas.astype(np.float32)
 		plt.imshow(img)
 
 	plt.savefig('sample-dataset.png', bbox_inchex='tight')
