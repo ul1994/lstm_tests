@@ -24,54 +24,44 @@ sys.path.append('/scratch/ua349/pose/tf/ver1')
 from training.optimizers import MultiSGD
 from training.dataset import get_dataflow
 
+from snapshot import Snapshot
 from still_train import *
-
 from models import *
-
 from generate_video import *
-dset = gather_videos(SEQ_LEN=args.time_steps, still=False)
 
-def gen(df):
-	every = 3
-	counter = 0
-
+def mix_gen(df, dset, batch_size, format='last', every=2):
 	while True:
 		for (inp, out) in df.get_data():
-			vids, mas, targs = next_video_batch(dset, batch_size)
-			videos, masks = [], []
-			targets = [[], [], [], [], [], []]
+			(video_frames, mask_pafs, mask_heats), (video_pafs, video_heats) = next_video_batch(dset, batch_size)
 
-			for ii in range(batch_size):
-				if ii % 2 == 0:
-					videos.append(inp[0][ii])
-					masks.append(inp[1][ii])
-					if args.format == 'last':
-						for jj in range(4):
-							targets[jj].append(out[jj][ii])
-						for jj in range(4, 6):
-							targets[jj].append(out[jj][ii][-1, :, :, :])
-					else:
-						for jj in range(6):
-							targets[jj].append(out[jj][ii])
+			numtargs = 6 * 2
+			videos, masks = [], [[], []]
+			targets = [list() for ii in range(numtargs)]
+
+			for batch_ii in range(batch_size):
+				if batch_ii % every == 0:
+					videos.append(inp[0][batch_ii])
+					masks[0].append(inp[1][batch_ii])
+					masks[1].append(inp[2][batch_ii])
+					for jj in range(numtargs):
+						targets[jj].append(out[jj][batch_ii])
 				else:
-					videos.append(vids[ii])
-					masks.append(mas[ii])
-					if args.format == 'last':
-						for jj in range(4):
-							targets[jj].append(targs[ii])
-						for jj in range(4, 6):
-							targets[jj].append(targs[ii][-1, :, :, :])
-					else:
-						for jj in range(6):
-							targets[jj].append(targs[ii])
+					videos.append(video_frames[batch_ii])
+					masks[0].append(mask_pafs[batch_ii])
+					masks[1].append(mask_heats[batch_ii])
+					for jj in range(numtargs):
+						targets[jj].append(targs[batch_ii])
 
 			videos = np.array(videos)
-			masks = np.array(masks)
-			for ii in range(6):
-				targets[ii] = np.array(targets[ii])
+			masks[0] = np.array(masks[0])
+			masks[1] = np.array(masks[1])
+			for targ_ii in range(numtargs):
+				targets[targ_ii] = np.array(targets[targ_ii])
+				if format == 'last' and targ_ii > 4 * 2:
+					targets[targ_ii] = targets[targ_ii][-1] # reduce to last frame
 
-			assert len(targets) == 6
-			yield [videos, masks], targets
+			assert len(targets) == numtargs
+			yield [videos, masks[0], masks[1]], targets
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
@@ -119,18 +109,16 @@ if __name__ == '__main__':
 
 	load_any_weights(model, multigpu=args.gpus > 1)
 
+
 	df = get_dataflow(
 		annot_path='%s/annotations/person_keypoints_%s2017.json' % (DATA_DIR, args.dataset),
 		img_dir='%s/%s2017/' % (DATA_DIR, args.dataset))
 	train_samples = df.size()
 	print('Collected %d val samples...' % train_samples)
 	train_df = batch_dataflow(df, batch_size, time_steps=args.time_steps, format=__format)
-	train_gen = gen(train_df)
 
-	print(model.inputs[0].get_shape())
-	# print(model.outputs)
-
-	from snapshot import Snapshot
+	dset = gather_videos(SEQ_LEN=args.time_steps, still=False)
+	train_gen = mix_gen(train_df, dset, batch_size)
 
 	model.fit_generator(train_gen,
 		steps_per_epoch=train_samples // batch_size,

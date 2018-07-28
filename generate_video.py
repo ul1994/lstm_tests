@@ -157,6 +157,33 @@ def create_mask(dims, height, width, bbox, stride=8, pad=1):
 	assert np.max(canvas) > 0
 	return canvas
 
+def augment(imgs, zoom, xoff, yoff, bbox, stride=1):
+	imgs = np.array(imgs)
+	# xoff = xoff / stride
+	# yoff = yoff / stride
+	FIRST = 0
+
+	width = imgs[FIRST].shape[1]
+	height = imgs[FIRST].shape[0]
+	x0, y0, xf, yf = np.array(bbox[FIRST]) / stride
+	boxX, boxY = (x0 + xf) / 2, (y0 + yf) / 2
+	cX = width / 2 - boxX
+	cY = height / 2 - boxY
+
+	canvas = np.zeros(imgs.shape, dtype=imgs.dtype)
+	fill = canvas[:, max(0, int(cY)):int(cY+height), max(0, int(cX)):int(cX+width), :]
+	subj = imgs[:, :fill.shape[1], :fill.shape[2], :]
+
+	# print(canvas.shape, fill.shape, subj.shape, (boxX, boxY), (width/2, height/2), (cX, cY))
+	try:
+		assert fill.shape == subj.shape
+	except:
+		raise Exception('ERR: %s -> %s' % (subj.shape, fill.shape))
+
+	fill[:, :, :, :] = subj[:, :, :, :]
+
+	return canvas
+
 def next_video_batch(refs, bsize=6, format='heatpaf'):
 	brefs = refs[0][:bsize]
 	refs[0] = refs[0][bsize:]
@@ -171,9 +198,6 @@ def next_video_batch(refs, bsize=6, format='heatpaf'):
 	targets = [[], []]
 
 	for ref in brefs:
-		zoom = 1 / random.uniform(1.0, 1.25) # x1.5 ~ x2.0
-		# sized, specs = zip(*[size_image(imread(path), ref['boxes'][ii], zoom) for ii, path in enumerate(ref['frames'])])
-
 		imgs, heats, pafs, mask_heats, mask_pafs = [], [], [], [], []
 		for frame_ii in range(len(ref['frames'])):
 			img = imread(ref['frames'][frame_ii])
@@ -187,9 +211,19 @@ def next_video_batch(refs, bsize=6, format='heatpaf'):
 			mask_heats.append(create_mask(19, width, height, ref['boxes'][frame_ii]))
 			mask_pafs.append(create_mask(38, width, height, ref['boxes'][frame_ii]))
 
-		sized = imgs
+		randZoom = random.uniform(0.5, 1.5)
+		# randX = random.uniform(-92, 92)
+		# randY = random.uniform(-92, 92)
+		randX = 0
+		randY = 0
 
-		videos.append(sized)
+		imgs = augment(imgs, randZoom, randX, randY, ref['boxes'], stride=1)
+		mask_heats = augment(mask_heats, randZoom, randX, randY, ref['boxes'], stride=8)
+		mask_pafs = augment(mask_pafs, randZoom, randX, randY, ref['boxes'], stride=8)
+		heats = augment(heats, randZoom, randX, randY, ref['boxes'], stride=8)
+		pafs = augment(pafs, randZoom, randX, randY, ref['boxes'], stride=8)
+
+		videos.append(imgs)
 		masks[0].append(mask_heats)
 		masks[1].append(mask_pafs)
 		targets[0].append(heats)
@@ -209,7 +243,7 @@ if __name__ == '__main__':
 
 	dset = gather_videos(SEQ_LEN=4, still=False, shuffle=False)
 
-	(frames, mask_pafs, mask_heats), (pafs, heats) = next_video_batch(dset, 10)
+	(frames, mask_pafs, mask_heats), (pafs, heats) = next_video_batch(dset, 1)
 
 	FIRST = 0
 	SEQ = 4
