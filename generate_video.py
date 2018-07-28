@@ -169,11 +169,7 @@ def augment(imgs, zoom, xoff, yoff, bbox, stride=1):
 	canvas = np.zeros(imgs.shape, dtype=imgs.dtype)
 	canv_width = canvas[FIRST].shape[1]
 	canv_height = canvas[FIRST].shape[0]
-	x0, y0, xf, yf = np.array(bbox[FIRST]) / stride # bbox affected by zoom
-	x0 = x0 * zoom + imgs[FIRST].shape[1] * (1 - zoom) / 2
-	xf = xf * zoom + imgs[FIRST].shape[1] * (1 - zoom) / 2
-	y0 = y0 * zoom + imgs[FIRST].shape[0] * (1 - zoom) / 2
-	yf = yf * zoom + imgs[FIRST].shape[0] * (1 - zoom) / 2
+	x0, y0, xf, yf = np.array(bbox[FIRST]) / stride * zoom # bbox affected by zoom
 
 	boxX, boxY = (x0 + xf) / 2, (y0 + yf) / 2
 	cX = canv_width / 2 - boxX + xoff
@@ -183,25 +179,21 @@ def augment(imgs, zoom, xoff, yoff, bbox, stride=1):
 	height = sized[FIRST].shape[0]
 
 	fill_Y0 = max(0, cY)
-	fill_YF = min(height, cY+height)
+	fill_YF = min(canv_height, cY+height)
 	fill_X0 = max(0, cX)
-	fill_XF = min(width, cX+width)
+	fill_XF = min(canv_width, cX+width)
 
 	subj_Y0 = max(0, -cY)
-	subj_YF = min(height, -cY+height)
 	subj_X0 = max(0, -cX)
-	subj_XF = min(width, -cX+width)
-
-	try: assert fill_YF - fill_Y0 == subj_YF - subj_Y0
-	except: raise Exception('Y: %.2f != %.2f' % (fill_YF - fill_Y0, subj_YF - subj_Y0))
-	try: assert fill_XF - fill_X0 == subj_XF - subj_X0
-	except: raise Exception('X: %.2f != %.2f' % (fill_XF - fill_X0, subj_XF - subj_X0))
+	# subj_YF = min(height, -cY+height)
+	# subj_XF = min(width, -cX+width)
 
 	fill = canvas[:, int(fill_Y0):int(fill_YF), int(fill_X0):int(fill_XF), :]
-	subj = sized[:, int(subj_Y0):int(subj_Y0)+fill.shape[1], int(subj_X0):int(subj_X0)+fill.shape[2], :]
+	subj = sized[:, int(subj_Y0):int(subj_Y0+fill.shape[1]), int(subj_X0):int(subj_X0+fill.shape[2]), :]
 
 	try: assert fill.shape == subj.shape
 	except:
+		print(imgs[FIRST].shape, sized[FIRST].shape)
 		print(cX, cY)
 		print(xoff, yoff)
 		print(fill_YF, fill_Y0, subj_YF, subj_Y0)
@@ -212,9 +204,10 @@ def augment(imgs, zoom, xoff, yoff, bbox, stride=1):
 
 	return canvas
 
-def next_video_batch(refs, bsize=6, format='heatpaf'):
+def next_video_batch(refs, bsize=6, format='heatpaf', stop=False):
 	brefs = refs[0][:bsize]
-	refs[0] = refs[0][bsize:]
+	if not stop:
+		refs[0] = refs[0][bsize:]
 
 	if len(refs[0]) < bsize:
 		shuffed = refs[1]
@@ -239,14 +232,9 @@ def next_video_batch(refs, bsize=6, format='heatpaf'):
 			mask_heats.append(create_mask(19, width, height, ref['boxes'][frame_ii]))
 			mask_pafs.append(create_mask(38, width, height, ref['boxes'][frame_ii]))
 
-		# randZoom = random.uniform(0.25, 0.5)
 		randZoom = random.uniform(0.5, 0.5)
-		randX = random.uniform(-92, 92)
-		randY = random.uniform(-92, 92)
-
-		randZoom = 0.75
-		randX = 0
-		randY = 0
+		randX = random.uniform(-96, 96)
+		randY = random.uniform(-96, 96)
 
 		imgs = augment(imgs, randZoom, randX, randY, ref['boxes'], stride=1)
 		mask_heats = augment(mask_heats, randZoom, randX, randY, ref['boxes'], stride=8)
@@ -274,47 +262,48 @@ if __name__ == '__main__':
 
 	dset = gather_videos(SEQ_LEN=4, still=False, shuffle=False)
 
-	(frames, mask_pafs, mask_heats), (pafs, heats) = next_video_batch(dset, 1)
+	for tag in range(10):
+		(frames, mask_pafs, mask_heats), (pafs, heats) = next_video_batch(dset, 1, stop=True)
 
-	FIRST = 0
-	SEQ = 4
-	plt.figure(figsize=(14, 10))
+		FIRST = 0
+		SEQ = 4
+		plt.figure(figsize=(14, 10))
 
-	for ii in range(SEQ):
-		plt.subplot(3, SEQ, ii+1)
-		plt.axis('off')
-		img = frames[FIRST][ii].astype(np.float32)/256
-		plt.imshow(img)
-		msk = cv2.resize(mask_heats[FIRST][ii][:, :, FIRST], (0,0), fx=8, fy=8)
-		plt.imshow(msk, alpha=0.1, vmin=0, vmax=1)
+		for ii in range(SEQ):
+			plt.subplot(3, SEQ, ii+1)
+			plt.axis('off')
+			img = frames[FIRST][ii].astype(np.float32)/256
+			plt.imshow(img)
+			msk = cv2.resize(mask_heats[FIRST][ii][:, :, FIRST], (0,0), fx=8, fy=8)
+			plt.imshow(msk, alpha=0.1, vmin=0, vmax=1)
 
-	for ii in range(SEQ):
-		plt.subplot(3, SEQ, SEQ+ii+1)
-		plt.axis('off')
-		img = np.sum(heats[FIRST][ii][:, :, :-1], axis=-1).astype(np.float32)
-		plt.imshow(img)
-		plt.imshow(mask_heats[FIRST][ii][:, :, FIRST], alpha=0.15)
+		for ii in range(SEQ):
+			plt.subplot(3, SEQ, SEQ+ii+1)
+			plt.axis('off')
+			img = np.sum(heats[FIRST][ii][:, :, :-1], axis=-1).astype(np.float32)
+			plt.imshow(img)
+			plt.imshow(mask_heats[FIRST][ii][:, :, FIRST], alpha=0.15)
 
-	for ii in range(SEQ):
-		plt.subplot(3, SEQ, 2*SEQ+ii+1)
-		plt.axis('off')
-		sy, sx, _ = pafs[FIRST][ii].shape
-		canvas = np.zeros((sy, sx))
-		for dd in range(38):
-			plane = pafs[FIRST][ii][:, :, dd]
-			canvas[plane > 0] = plane[plane > 0]
-		img = canvas.astype(np.float32)
-		plt.imshow(img)
-		plt.imshow(mask_heats[FIRST][ii][:, :, FIRST], alpha=0.15)
+		for ii in range(SEQ):
+			plt.subplot(3, SEQ, 2*SEQ+ii+1)
+			plt.axis('off')
+			sy, sx, _ = pafs[FIRST][ii].shape
+			canvas = np.zeros((sy, sx))
+			for dd in range(38):
+				plane = pafs[FIRST][ii][:, :, dd]
+				canvas[plane > 0] = plane[plane > 0]
+			img = canvas.astype(np.float32)
+			plt.imshow(img)
+			plt.imshow(mask_heats[FIRST][ii][:, :, FIRST], alpha=0.15)
 
-	plt.savefig('sample-dataset.png', bbox_inchex='tight')
-	plt.close()
+		plt.savefig('samples/%d.png' % tag, bbox_inchex='tight')
+		plt.close()
 
-	plt.figure(figsize=(14, 10))
-	for ii in range(38):
-		plt.subplot(5, 8, ii+1)
-		plt.axis('off')
-		plt.imshow(mask_pafs[FIRST][FIRST][:, :, ii])
+		# plt.figure(figsize=(14, 10))
+		# for ii in range(38):
+		# 	plt.subplot(5, 8, ii+1)
+		# 	plt.axis('off')
+		# 	plt.imshow(mask_pafs[FIRST][FIRST][:, :, ii])
 
-	plt.savefig('sample-paf-masks.png', bbox_inchex='tight')
-	plt.close()
+		# plt.savefig('sample-paf-masks.png', bbox_inchex='tight')
+		# plt.close()
