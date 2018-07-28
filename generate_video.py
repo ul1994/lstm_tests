@@ -232,7 +232,7 @@ def next_video_batch(refs, bsize=6, format='heatpaf', stop=False):
 			mask_heats.append(create_mask(19, width, height, ref['boxes'][frame_ii]))
 			mask_pafs.append(create_mask(38, width, height, ref['boxes'][frame_ii]))
 
-		randZoom = random.uniform(0.5, 0.5)
+		randZoom = random.uniform(0.33, 1.0)
 		randX = random.uniform(-96, 96)
 		randY = random.uniform(-96, 96)
 
