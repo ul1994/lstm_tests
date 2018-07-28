@@ -150,6 +150,13 @@ def size_image(img, bbox, zoom, size=368):
 
 	# for frame in range()
 
+def create_mask(dims, height, width, bbox, stride=8, pad=1):
+	x0, y0, xf, yf = (np.array(bbox) / stride)
+	canvas = np.zeros((height, width, dims))
+	canvas[int(y0)-pad:int(yf)+pad, int(x0)-pad:int(xf)+pad] = 1
+	assert np.max(canvas) > 0
+	return canvas
+
 def next_video_batch(refs, bsize=6, format='heatpaf'):
 	brefs = refs[0][:bsize]
 	refs[0] = refs[0][bsize:]
@@ -168,22 +175,17 @@ def next_video_batch(refs, bsize=6, format='heatpaf'):
 		# sized, specs = zip(*[size_image(imread(path), ref['boxes'][ii], zoom) for ii, path in enumerate(ref['frames'])])
 
 		imgs, heats, pafs, mask_heats, mask_pafs = [], [], [], [], []
-		for ii in range(len(ref['frames'])):
-			img = imread(ref['frames'][ii])
+		for frame_ii in range(len(ref['frames'])):
+			img = imread(ref['frames'][frame_ii])
 			imgs.append(img)
 
-			sy, sx = int(img.shape[0] / 8), int(img.shape[1] / 8)
+			width, height = int(img.shape[0] / 8), int(img.shape[1] / 8)
 
-			heats.append(create_heatmap(19, sy, sx, [ref['coco_coords'][ii]], sigma=7.0, stride=8))
-			pafs.append(create_paf(38, sy, sx, [ref['coco_coords'][ii]], threshold=1.0, stride=8))
+			heats.append(create_heatmap(19, width, height, [ref['coco_coords'][frame_ii]], sigma=7.0, stride=8))
+			pafs.append(create_paf(38, width, height, [ref['coco_coords'][frame_ii]], threshold=1.0, stride=8))
 
-			mask_heats.append(np.ones((sy, sx, 19)))
-			mask_pafs.append(np.ones((sy, sx, 38)))
-
-		# TODO: mask all except final
-		# for ii in range(len(ref['frames'])):
-		# 	# heats[ii][:, :, :-1] = np.multiply(heats[ii][:, :, :-1], mask[ii][:, :, :-1])
-		# 	heats[ii][:, :, :] = np.multiply(heats[ii][:, :, :], mask[ii][:, :, :])
+			mask_heats.append(create_mask(19, width, height, ref['boxes'][frame_ii]))
+			mask_pafs.append(create_mask(38, width, height, ref['boxes'][frame_ii]))
 
 		sized = imgs
 
@@ -207,7 +209,7 @@ if __name__ == '__main__':
 
 	dset = gather_videos(SEQ_LEN=4, still=False, shuffle=False)
 
-	(frames, masks, _), (pafs, heats) = next_video_batch(dset, 10)
+	(frames, mask_pafs, mask_heats), (pafs, heats) = next_video_batch(dset, 10)
 
 	FIRST = 0
 	SEQ = 4
@@ -218,15 +220,15 @@ if __name__ == '__main__':
 		plt.axis('off')
 		img = frames[FIRST][ii].astype(np.float32)/256
 		plt.imshow(img)
-		msk = cv2.resize(masks[FIRST][ii][:, :, FIRST], (0,0), fx=8, fy=8)
-		plt.imshow(msk, alpha=0.25)
+		msk = cv2.resize(mask_heats[FIRST][ii][:, :, FIRST], (0,0), fx=8, fy=8)
+		plt.imshow(msk, alpha=0.1, vmin=0, vmax=1)
 
 	for ii in range(SEQ):
 		plt.subplot(3, SEQ, SEQ+ii+1)
 		plt.axis('off')
 		img = np.sum(heats[FIRST][ii][:, :, :-1], axis=-1).astype(np.float32)
 		plt.imshow(img)
-		plt.imshow(masks[FIRST][ii][:, :, 0], alpha=0.25)
+		plt.imshow(mask_heats[FIRST][ii][:, :, FIRST], alpha=0.15)
 
 	for ii in range(SEQ):
 		plt.subplot(3, SEQ, 2*SEQ+ii+1)
@@ -238,5 +240,16 @@ if __name__ == '__main__':
 			canvas[plane > 0] = plane[plane > 0]
 		img = canvas.astype(np.float32)
 		plt.imshow(img)
+		plt.imshow(mask_heats[FIRST][ii][:, :, FIRST], alpha=0.15)
 
 	plt.savefig('sample-dataset.png', bbox_inchex='tight')
+	plt.close()
+
+	plt.figure(figsize=(14, 10))
+	for ii in range(38):
+		plt.subplot(5, 8, ii+1)
+		plt.axis('off')
+		plt.imshow(mask_pafs[FIRST][FIRST][:, :, ii])
+
+	plt.savefig('sample-paf-masks.png', bbox_inchex='tight')
+	plt.close()
