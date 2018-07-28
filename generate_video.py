@@ -169,7 +169,17 @@ def augment(imgs, zoom, xoff, yoff, bbox, stride=1):
 	canvas = np.zeros(imgs.shape, dtype=imgs.dtype)
 	canv_width = canvas[FIRST].shape[1]
 	canv_height = canvas[FIRST].shape[0]
-	x0, y0, xf, yf = np.array(bbox[FIRST]) / stride * zoom # bbox affected by zoom
+	sizedBox = np.array(bbox[FIRST]) / stride * zoom # bbox affected by zoom
+
+	# zoomX = -(imgs[FIRST].shape[1] - sized[FIRST].shape[1]) /2
+	# zoomY = -(imgs[FIRST].shape[0] - sized[FIRST].shape[0]) /2
+	zoomX = 0
+	zoomY = 0
+	# print(zoomX, zoomY)
+	sizedBox += np.array([zoomX, zoomY, zoomX, zoomY])
+
+	x0, y0, xf, yf = sizedBox
+
 
 	boxX, boxY = (x0 + xf) / 2, (y0 + yf) / 2
 	cX = canv_width / 2 - boxX + xoff
