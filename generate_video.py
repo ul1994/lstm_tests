@@ -184,20 +184,16 @@ def shape_image(imgs, bbox, spec, stride=1):
 	fill[:, :, :, :] = subj[:, :, :, :]
 
 
-	imsize = canvas.shape[1:3]
-	pivot = np.array(imsize) / 2 + np.array([yoff, xoff])
-	padX = [imsize[1] - int(pivot[1]), int(pivot[1])]
-	padY = [imsize[0] - int(pivot[0]), int(pivot[0])]
-	padded = np.pad(canvas, [[0, 0], padY, padX, [0, 0]], 'constant')
-	padded = ndimage.rotate(
-		padded.astype(np.float32),
-		rotate, axes=(2, 1), reshape=False).astype(imgs.dtype)
-	# for frame_ii in range(len(padded)):
-		# padded[frame_ii, :, :, :] = ndimage.rotate(
-		# 	padded[frame_ii].astype(np.float32),
-		# 	rotate, reshape=False).astype(imgs.dtype)
+	# imsize = canvas.shape[1:3]
+	# pivot = np.array(imsize) / 2 + np.array([yoff, xoff])
+	# padX = [imsize[1] - int(pivot[1]), int(pivot[1])]
+	# padY = [imsize[0] - int(pivot[0]), int(pivot[0])]
+	# padded = np.pad(canvas, [[0, 0], padY, padX, [0, 0]], 'constant')
+	# padded = ndimage.rotate(
+	# 	padded.astype(np.float32),
+	# 	rotate, axes=(2, 1), reshape=False).astype(imgs.dtype)
 
-	canvas = padded[:, padY[0]:-padY[1], padX[0]:-padX[1], :]
+	# canvas = padded[:, padY[0]:-padY[1], padX[0]:-padX[1], :]
 
 	return canvas
 
@@ -242,10 +238,10 @@ def shape_coords(coords, bbox, imsize, spec):
 		jy -= boxY
 		jx *= zoom # scale at origin
 		jy *= zoom
-		jx, jy = rotate_around_point_highperf(
-			(jx, jy),
-			math.pi * rotate/180,
-			(0, 0)) # rotate at origin
+		# jx, jy = rotate_around_point_highperf(
+		# 	(jx, jy),
+		# 	math.pi * rotate/180,
+		# 	(0, 0)) # rotate at origin
 
 		jx += canv_width/2 # return it to canvas center
 		jy += canv_height/2
@@ -257,6 +253,24 @@ def shape_coords(coords, bbox, imsize, spec):
 	modded = np.array(modded)
 
 	return modded
+def crop(imgs, tosize):
+	imsize = imgs[0].shape
+
+	canvas = np.zeros(
+		(len(imgs), max(imsize[0], tosize), max(imsize[1], tosize), imsize[-1]),
+		dtype=imgs[0].dtype)
+	dy = int((canvas.shape[1] - imsize[0]) / 2)
+	dx = int((canvas.shape[2] - imsize[1]) / 2)
+	assert dy >= 0
+	assert dx >= 0
+	canvas[:, dy:dy+imsize[0], dx:dx+imsize[1], :] = imgs
+
+	dy = int((canvas.shape[1] - tosize) / 2)
+	dx = int((canvas.shape[2] - tosize) / 2)
+	assert dy >= 0
+	assert dx >= 0
+
+	return canvas[:, dy:dy+tosize, dx:dx+tosize, :].copy()
 
 def next_video_batch(refs, bsize=6, format='heatpaf', stop=False):
 	brefs = refs[0][:bsize]
@@ -275,7 +289,7 @@ def next_video_batch(refs, bsize=6, format='heatpaf', stop=False):
 	for ref in brefs:
 		imgs, heats, pafs, mask_heats, mask_pafs = [], [], [], [], []
 
-		randZoom = random.uniform(0.33, 1.0)
+		randZoom = random.uniform(0.5, 1.0)
 		# randDeg = random.uniform(-45, 45)
 		randDeg = 45
 		randX = random.uniform(-96, 96)
@@ -301,6 +315,12 @@ def next_video_batch(refs, bsize=6, format='heatpaf', stop=False):
 
 		mask_heats = shape_image(mask_heats, ref['boxes'], spec, stride=8)
 		mask_pafs = shape_image(mask_pafs, ref['boxes'], spec, stride=8)
+
+		imgs = crop(imgs, 368)
+		mask_heats = crop(mask_heats, 46)
+		mask_pafs = crop(mask_pafs, 46)
+		heats = crop(heats, 46)
+		pafs = crop(pafs, 46)
 
 		videos.append(imgs)
 		masks[0].append(mask_heats)
