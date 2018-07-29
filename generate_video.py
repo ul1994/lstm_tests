@@ -1,5 +1,5 @@
-import matplotlib as mpl
-mpl.use('Agg')
+# import matplotlib as mpl
+# mpl.use('Agg')
 
 import os, sys
 import cv2
@@ -8,6 +8,7 @@ from random import shuffle
 sys.path.append('../tf/ver1')
 from training.label_maps import create_heatmap, create_paf
 from training.dataflow import JointsLoader
+import scipy.ndimage as ndimage
 
 DATA_DIR = "/beegfs/ua349/lstm/Penn_Action"
 
@@ -85,7 +86,7 @@ def gather_videos(SEQ_LEN = 4, still=False, speedup=2, shuffle=True):
 					print('WARN: Missing bbox %s' % lblpath)
 					print()
 					box = bbox[ii-1] # just sub in last frame
-
+				box = [val+1 for val in box]
 				ref['boxes'].append(box)
 				coords = []
 				for (xx, yy) in zip(xs[ii], ys[ii]):
@@ -150,14 +151,15 @@ def size_image(img, bbox, zoom, size=368):
 
 	# for frame in range()
 
-def create_mask(dims, height, width, bbox, stride=8, pad=1):
+def create_mask(dims, height, width, bbox, stride=8, pad=16):
+	pad = int(pad / stride)
 	x0, y0, xf, yf = (np.array(bbox) / stride)
 	canvas = np.zeros((height, width, dims))
 	canvas[int(y0)-pad:int(yf)+pad, int(x0)-pad:int(xf)+pad] = 1
 	assert np.max(canvas) > 0
 	return canvas
 
-def augment(imgs, zoom, xoff, yoff, bbox, stride=1):
+def augment(imgs, zoom, xoff, yoff, rotate, bbox, stride=1):
 	FIRST = 0
 	xoff = xoff / stride
 	yoff = yoff / stride
@@ -212,6 +214,19 @@ def augment(imgs, zoom, xoff, yoff, bbox, stride=1):
 
 	fill[:, :, :, :] = subj[:, :, :, :]
 
+
+	pivot = np.array(list(canvas.shape[1:3])) / 2
+	imsize = canvas.shape[1:3]
+	padX = [imsize[1] - int(pivot[1]), int(pivot[1])]
+	padY = [imsize[0] - int(pivot[0]), int(pivot[0])]
+	padded = np.pad(canvas, [[0, 0], padY, padX, [0, 0]], 'constant')
+	for frame_ii in range(len(padded)):
+		padded[frame_ii, :, :, :] = ndimage.rotate(
+			padded[frame_ii].astype(np.float32),
+			rotate, reshape=False).astype(imgs.dtype)
+
+	canvas = padded[:, padY[0]:-padY[1], padX[0]:-padX[1], :]
+
 	return canvas
 
 def next_video_batch(refs, bsize=6, format='heatpaf', stop=False):
@@ -243,14 +258,15 @@ def next_video_batch(refs, bsize=6, format='heatpaf', stop=False):
 			mask_pafs.append(create_mask(38, width, height, ref['boxes'][frame_ii]))
 
 		randZoom = random.uniform(0.33, 1.0)
+		randDeg = random.uniform(-45, 45)
 		randX = random.uniform(-96, 96)
 		randY = random.uniform(-96, 96)
 
-		imgs = augment(imgs, randZoom, randX, randY, ref['boxes'], stride=1)
-		mask_heats = augment(mask_heats, randZoom, randX, randY, ref['boxes'], stride=8)
-		mask_pafs = augment(mask_pafs, randZoom, randX, randY, ref['boxes'], stride=8)
-		heats = augment(heats, randZoom, randX, randY, ref['boxes'], stride=8)
-		pafs = augment(pafs, randZoom, randX, randY, ref['boxes'], stride=8)
+		imgs = augment(imgs, randZoom, randX, randY, randDeg, ref['boxes'], stride=1)
+		mask_heats = augment(mask_heats, randZoom, randX, randY, randDeg, ref['boxes'], stride=8)
+		mask_pafs = augment(mask_pafs, randZoom, randX, randY, randDeg, ref['boxes'], stride=8)
+		heats = augment(heats, randZoom, randX, randY, randDeg, ref['boxes'], stride=8)
+		pafs = augment(pafs, randZoom, randX, randY, randDeg, ref['boxes'], stride=8)
 
 		videos.append(imgs)
 		masks[0].append(mask_heats)
