@@ -145,12 +145,18 @@ def shape_image(imgs, bbox, spec, stride=1):
 	canvas = np.zeros(imgs.shape, dtype=imgs.dtype)
 	canv_width = canvas[FIRST].shape[1]
 	canv_height = canvas[FIRST].shape[0]
-	sizedBox = np.array(bbox[FIRST]) / stride * zoom # bbox affected by zoom
+	sizedBox = np.array(bbox[FIRST]) / stride # bbox affected by zoom
 	x0, y0, xf, yf = sizedBox
 
 	boxX, boxY = (x0 + xf) / 2, (y0 + yf) / 2
-	cX = canv_width / 2 - boxX + xoff
-	cY = canv_height / 2 - boxY + yoff
+	cX = -boxX # center p0 at origin
+	cY = -boxY
+	cX *= zoom # zoom at origin
+	cY *= zoom
+	cX += canv_width/2 # return p0 to canvas center
+	cY += canv_height/2
+	cX += xoff # apply offset
+	cY += yoff
 
 	width = sized[FIRST].shape[1]
 	height = sized[FIRST].shape[0]
@@ -178,17 +184,17 @@ def shape_image(imgs, bbox, spec, stride=1):
 	fill[:, :, :, :] = subj[:, :, :, :]
 
 
-	pivot = np.array(list(canvas.shape[1:3])) / 2
-	imsize = canvas.shape[1:3]
-	padX = [imsize[1] - int(pivot[1]), int(pivot[1])]
-	padY = [imsize[0] - int(pivot[0]), int(pivot[0])]
-	padded = np.pad(canvas, [[0, 0], padY, padX, [0, 0]], 'constant')
-	for frame_ii in range(len(padded)):
-		padded[frame_ii, :, :, :] = ndimage.rotate(
-			padded[frame_ii].astype(np.float32),
-			rotate, reshape=False).astype(imgs.dtype)
+	# pivot = np.array(list(canvas.shape[1:3])) / 2
+	# imsize = canvas.shape[1:3]
+	# padX = [imsize[1] - int(pivot[1]), int(pivot[1])]
+	# padY = [imsize[0] - int(pivot[0]), int(pivot[0])]
+	# padded = np.pad(canvas, [[0, 0], padY, padX, [0, 0]], 'constant')
+	# for frame_ii in range(len(padded)):
+	# 	padded[frame_ii, :, :, :] = ndimage.rotate(
+	# 		padded[frame_ii].astype(np.float32),
+	# 		rotate, reshape=False).astype(imgs.dtype)
 
-	canvas = padded[:, padY[0]:-padY[1], padX[0]:-padX[1], :]
+	# canvas = padded[:, padY[0]:-padY[1], padX[0]:-padX[1], :]
 
 	return canvas
 
@@ -214,7 +220,7 @@ def shape_coords(coords, bbox, imsize, spec):
 	zoom, rotate, xoff, yoff = spec
 	modded = []
 
-	sizedBox = np.array(bbox) * zoom # bbox affected by zoom
+	sizedBox = np.array(bbox) # bbox affected by zoom
 	x0, y0, xf, yf = sizedBox
 
 	boxX, boxY = (x0 + xf) / 2, (y0 + yf) / 2
@@ -236,15 +242,15 @@ def shape_coords(coords, bbox, imsize, spec):
 		jy -= boxY
 		jx *= zoom # scale at origin
 		jy *= zoom
-		jx, jy = rotate_around_point_highperf(
-			(jx, jy),
-			math.pi * rotate/180,
-			(0, 0)) # rotate at origin
+		# jx, jy = rotate_around_point_highperf(
+		# 	(jx, jy),
+		# 	math.pi * rotate/180,
+		# 	(0, 0)) # rotate at origin
 
 		jx += canv_width/2 # return it to canvas center
 		jy += canv_height/2
-		# jx += xoff # offset
-		# jy += yoff
+		jx += xoff # offset
+		jy += yoff
 
 		modded.append([jx, jy])
 
