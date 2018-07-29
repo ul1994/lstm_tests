@@ -1,7 +1,7 @@
 # import matplotlib as mpl
 # mpl.use('Agg')
 
-import os, sys
+import os, sys, math
 import cv2
 from scipy.io import loadmat
 from random import shuffle
@@ -192,9 +192,65 @@ def shape_image(imgs, bbox, spec, stride=1):
 
 	return canvas
 
-def shape_coords(coords, boxes, spec):
+def rotate_around_point_highperf(xy, radians, origin=(0, 0)):
+	"""Rotate a point around a given point.
+
+	I call this the "high performance" version since we're caching some
+	values that are needed >1 time. It's less readable than the previous
+	function but it's faster.
+	"""
+	x, y = xy
+	offset_x, offset_y = origin
+	adjusted_x = (x - offset_x)
+	adjusted_y = (y - offset_y)
+	cos_rad = math.cos(radians)
+	sin_rad = math.sin(radians)
+	qx = offset_x + cos_rad * adjusted_x + sin_rad * adjusted_y
+	qy = offset_y + -sin_rad * adjusted_x + cos_rad * adjusted_y
+
+	return qx, qy
+
+def shape_coords(coords, bbox, imsize, spec):
 	zoom, rotate, xoff, yoff = spec
-	return coords
+	modded = []
+
+	sizedBox = np.array(bbox) * zoom # bbox affected by zoom
+	x0, y0, xf, yf = sizedBox
+
+	boxX, boxY = (x0 + xf) / 2, (y0 + yf) / 2
+	canv_height, canv_width = imsize[:2]
+	cX = canv_width / 2 - boxX
+	cY = canv_height / 2 - boxY
+
+	width = imsize[1] * zoom
+	height = imsize[0] * zoom
+
+	for point in coords:
+		if point is None:
+			modded.append(None)
+			continue
+
+		jx, jy = point
+
+		jx -= boxX # send coords to origin centered at box
+		jy -= boxY
+		jx *= zoom # scale at origin
+		jy *= zoom
+		jx, jy = rotate_around_point_highperf(
+			(jx, jy),
+			math.pi * rotate/180,
+			(0, 0)) # rotate at origin
+
+		jx += canv_width/2 # return it to canvas center
+		jy += canv_height/2
+		# jx += xoff # offset
+		# jy += yoff
+
+		modded.append([jx, jy])
+
+	modded = np.array(modded)
+
+	return modded
 
 def next_video_batch(refs, bsize=6, format='heatpaf', stop=False):
 	brefs = refs[0][:bsize]
@@ -214,18 +270,23 @@ def next_video_batch(refs, bsize=6, format='heatpaf', stop=False):
 		imgs, heats, pafs, mask_heats, mask_pafs = [], [], [], [], []
 
 		randZoom = random.uniform(0.33, 1.0)
-		randDeg = random.uniform(-45, 45)
+		# randDeg = random.uniform(-45, 45)
+		randDeg = 45
 		randX = random.uniform(-96, 96)
 		randY = random.uniform(-96, 96)
 
 		spec = (randZoom, randDeg, randX, randY)
 
 		imgs = [imread(path) for path in ref['frames']]
+		imsize = imgs[0].shape
 		imgs = shape_image(imgs, ref['boxes'], spec)
 
 		width, height = int(imgs[0].shape[0] / 8), int(imgs[0].shape[1] / 8)
 		for frame_ii in range(len(ref['frames'])):
-			coords = shape_coords(ref['coco_coords'][frame_ii], ref['boxes'][frame_ii], spec)
+			coords = shape_coords(
+				ref['coco_coords'][frame_ii],
+				ref['boxes'][frame_ii],
+				imsize, spec)
 			heats.append(create_heatmap(19, width, height, [coords], sigma=7.0, stride=8))
 			pafs.append(create_paf(38, width, height, [coords], threshold=1.0, stride=8))
 
