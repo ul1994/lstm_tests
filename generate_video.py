@@ -121,35 +121,8 @@ from cv2 import imread
 import numpy as np
 import random
 
-def size_image(img, bbox, zoom, size=368):
-	img = img.astype(np.float32)
-
-	targ = size * zoom
-	half = targ / 2
-
-	cx, cy = (bbox[2] + bbox[0]) / 2, (bbox[3] + bbox[1]) / 2
-
-	x0, y0 = max(0, cx - half), max(0, cy - half)
-	region = img[int(y0):int(y0+targ), int(x0):int(x0+targ)]
-	maxlen = max(region.shape[0], region.shape[1])
-
-	region = cv2.resize(region, (0,0), fx=368 / maxlen, fy=368 / maxlen)
-	assert region.shape[0] == size or region.shape[1] == size
-
-	canvas = np.zeros((size, size, 3))
-
-	# center image again b/c region is not always a square
-	dx, dy = 0, 0
-	if region.shape[0] > region.shape[1]:
-		dx = int((size - region.shape[1]) / 2)
-	else:
-		dy = int((size - region.shape[0]) / 2)
-
-	canvas[dy:dy+region.shape[0], dx:dx+region.shape[1]] = region
-
-	return canvas, (zoom, targ, (x0, y0), (dx, dy))
-
-	# for frame in range()
+def box_center(box):
+	return (box[2] + box[0]) / 2, (box[3] + box[1]) / 2
 
 def create_mask(dims, height, width, bbox, stride=8, pad=16):
 	pad = int(pad / stride)
@@ -159,7 +132,8 @@ def create_mask(dims, height, width, bbox, stride=8, pad=16):
 	assert np.max(canvas) > 0
 	return canvas
 
-def augment(imgs, zoom, xoff, yoff, rotate, bbox, stride=1):
+def shape_image(imgs, bbox, spec, stride=1):
+	zoom, rotate, xoff, yoff = spec
 	FIRST = 0
 	xoff = xoff / stride
 	yoff = yoff / stride
@@ -172,16 +146,7 @@ def augment(imgs, zoom, xoff, yoff, rotate, bbox, stride=1):
 	canv_width = canvas[FIRST].shape[1]
 	canv_height = canvas[FIRST].shape[0]
 	sizedBox = np.array(bbox[FIRST]) / stride * zoom # bbox affected by zoom
-
-	# zoomX = -(imgs[FIRST].shape[1] - sized[FIRST].shape[1]) /2
-	# zoomY = -(imgs[FIRST].shape[0] - sized[FIRST].shape[0]) /2
-	zoomX = 0
-	zoomY = 0
-	# print(zoomX, zoomY)
-	sizedBox += np.array([zoomX, zoomY, zoomX, zoomY])
-
 	x0, y0, xf, yf = sizedBox
-
 
 	boxX, boxY = (x0 + xf) / 2, (y0 + yf) / 2
 	cX = canv_width / 2 - boxX + xoff
@@ -197,8 +162,6 @@ def augment(imgs, zoom, xoff, yoff, rotate, bbox, stride=1):
 
 	subj_Y0 = max(0, -cY)
 	subj_X0 = max(0, -cX)
-	# subj_YF = min(height, -cY+height)
-	# subj_XF = min(width, -cX+width)
 
 	fill = canvas[:, int(fill_Y0):int(fill_YF), int(fill_X0):int(fill_XF), :]
 	subj = sized[:, int(subj_Y0):int(subj_Y0+fill.shape[1]), int(subj_X0):int(subj_X0+fill.shape[2]), :]
@@ -245,28 +208,24 @@ def next_video_batch(refs, bsize=6, format='heatpaf', stop=False):
 
 	for ref in brefs:
 		imgs, heats, pafs, mask_heats, mask_pafs = [], [], [], [], []
-		for frame_ii in range(len(ref['frames'])):
-			img = imread(ref['frames'][frame_ii])
-			imgs.append(img)
-
-			width, height = int(img.shape[0] / 8), int(img.shape[1] / 8)
-
-			heats.append(create_heatmap(19, width, height, [ref['coco_coords'][frame_ii]], sigma=7.0, stride=8))
-			pafs.append(create_paf(38, width, height, [ref['coco_coords'][frame_ii]], threshold=1.0, stride=8))
-
-			mask_heats.append(create_mask(19, width, height, ref['boxes'][frame_ii]))
-			mask_pafs.append(create_mask(38, width, height, ref['boxes'][frame_ii]))
 
 		randZoom = random.uniform(0.33, 1.0)
 		randDeg = random.uniform(-45, 45)
 		randX = random.uniform(-96, 96)
 		randY = random.uniform(-96, 96)
 
-		imgs = augment(imgs, randZoom, randX, randY, randDeg, ref['boxes'], stride=1)
-		mask_heats = augment(mask_heats, randZoom, randX, randY, randDeg, ref['boxes'], stride=8)
-		mask_pafs = augment(mask_pafs, randZoom, randX, randY, randDeg, ref['boxes'], stride=8)
-		heats = augment(heats, randZoom, randX, randY, randDeg, ref['boxes'], stride=8)
-		pafs = augment(pafs, randZoom, randX, randY, randDeg, ref['boxes'], stride=8)
+		spec = (randZoom, randDeg, randX, randY)
+
+		imgs = [imread(path) for path in ref['frames']]
+		imgs = shape_image(imgs, ref['boxes'], spec)
+
+		width, height = int(imgs[0].shape[0] / 8), int(imgs[0].shape[1] / 8)
+		for frame_ii in range(len(ref['frames'])):
+			heats.append(create_heatmap(19, width, height, [ref['coco_coords'][frame_ii]], sigma=7.0, stride=8))
+			pafs.append(create_paf(38, width, height, [ref['coco_coords'][frame_ii]], threshold=1.0, stride=8))
+
+			mask_heats.append(create_mask(19, width, height, ref['boxes'][frame_ii]))
+			mask_pafs.append(create_mask(38, width, height, ref['boxes'][frame_ii]))
 
 		videos.append(imgs)
 		masks[0].append(mask_heats)
