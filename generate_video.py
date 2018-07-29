@@ -184,17 +184,20 @@ def shape_image(imgs, bbox, spec, stride=1):
 	fill[:, :, :, :] = subj[:, :, :, :]
 
 
-	# pivot = np.array(list(canvas.shape[1:3])) / 2
-	# imsize = canvas.shape[1:3]
-	# padX = [imsize[1] - int(pivot[1]), int(pivot[1])]
-	# padY = [imsize[0] - int(pivot[0]), int(pivot[0])]
-	# padded = np.pad(canvas, [[0, 0], padY, padX, [0, 0]], 'constant')
+	imsize = canvas.shape[1:3]
+	pivot = np.array(imsize) / 2 + np.array([yoff, xoff])
+	padX = [imsize[1] - int(pivot[1]), int(pivot[1])]
+	padY = [imsize[0] - int(pivot[0]), int(pivot[0])]
+	padded = np.pad(canvas, [[0, 0], padY, padX, [0, 0]], 'constant')
+	padded = ndimage.rotate(
+		padded.astype(np.float32),
+		rotate, axes=(2, 1), reshape=False).astype(imgs.dtype)
 	# for frame_ii in range(len(padded)):
-	# 	padded[frame_ii, :, :, :] = ndimage.rotate(
-	# 		padded[frame_ii].astype(np.float32),
-	# 		rotate, reshape=False).astype(imgs.dtype)
+		# padded[frame_ii, :, :, :] = ndimage.rotate(
+		# 	padded[frame_ii].astype(np.float32),
+		# 	rotate, reshape=False).astype(imgs.dtype)
 
-	# canvas = padded[:, padY[0]:-padY[1], padX[0]:-padX[1], :]
+	canvas = padded[:, padY[0]:-padY[1], padX[0]:-padX[1], :]
 
 	return canvas
 
@@ -228,9 +231,6 @@ def shape_coords(coords, bbox, imsize, spec):
 	cX = canv_width / 2 - boxX
 	cY = canv_height / 2 - boxY
 
-	width = imsize[1] * zoom
-	height = imsize[0] * zoom
-
 	for point in coords:
 		if point is None:
 			modded.append(None)
@@ -242,10 +242,10 @@ def shape_coords(coords, bbox, imsize, spec):
 		jy -= boxY
 		jx *= zoom # scale at origin
 		jy *= zoom
-		# jx, jy = rotate_around_point_highperf(
-		# 	(jx, jy),
-		# 	math.pi * rotate/180,
-		# 	(0, 0)) # rotate at origin
+		jx, jy = rotate_around_point_highperf(
+			(jx, jy),
+			math.pi * rotate/180,
+			(0, 0)) # rotate at origin
 
 		jx += canv_width/2 # return it to canvas center
 		jy += canv_height/2
