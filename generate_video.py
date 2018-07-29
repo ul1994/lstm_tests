@@ -192,6 +192,10 @@ def shape_image(imgs, bbox, spec, stride=1):
 
 	return canvas
 
+def shape_coords(coords, boxes, spec):
+	zoom, rotate, xoff, yoff = spec
+	return coords
+
 def next_video_batch(refs, bsize=6, format='heatpaf', stop=False):
 	brefs = refs[0][:bsize]
 	if not stop:
@@ -221,11 +225,15 @@ def next_video_batch(refs, bsize=6, format='heatpaf', stop=False):
 
 		width, height = int(imgs[0].shape[0] / 8), int(imgs[0].shape[1] / 8)
 		for frame_ii in range(len(ref['frames'])):
-			heats.append(create_heatmap(19, width, height, [ref['coco_coords'][frame_ii]], sigma=7.0, stride=8))
-			pafs.append(create_paf(38, width, height, [ref['coco_coords'][frame_ii]], threshold=1.0, stride=8))
+			coords = shape_coords(ref['coco_coords'][frame_ii], ref['boxes'][frame_ii], spec)
+			heats.append(create_heatmap(19, width, height, [coords], sigma=7.0, stride=8))
+			pafs.append(create_paf(38, width, height, [coords], threshold=1.0, stride=8))
 
 			mask_heats.append(create_mask(19, width, height, ref['boxes'][frame_ii]))
 			mask_pafs.append(create_mask(38, width, height, ref['boxes'][frame_ii]))
+
+		mask_heats = shape_image(mask_heats, ref['boxes'], spec, stride=8)
+		mask_pafs = shape_image(mask_pafs, ref['boxes'], spec, stride=8)
 
 		videos.append(imgs)
 		masks[0].append(mask_heats)
