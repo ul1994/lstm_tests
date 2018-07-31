@@ -27,6 +27,8 @@ class Video:
 	def __init__(self, seqlen, speedup=1):
 		self.index = 0
 
+		self.source = None
+
 		self.frames = []
 		self.boxes = []
 		self.coords = []
@@ -107,6 +109,7 @@ class MultiVideoDataset:
 			vis, dim = mat['visibility'], mat['dimensions']
 
 			vidobj = Video(speedup=speedup, seqlen=seqlen)
+			vidobj.source = 'penn'
 			videos.append(vidobj)
 
 			assert len(vidobj.frames) == 0
@@ -186,6 +189,7 @@ class MultiVideoDataset:
 		self.streams = streams
 		self.buckets = buckets
 		self.used = used
+		self.first_batch = True
 
 	def sample_bucket(self, bind, bsize):
 		if len(self.buckets[bind]) < bsize:
@@ -227,6 +231,10 @@ class MultiVideoDataset:
 			# activate fetched videos
 			self.streams = videos
 
+			if self.first_batch:
+				vid_ended = False # don't trigger a reset w/ first batch
+				self.first_batch = False
+
 		# list of (segment, augment) tuples
 		batch_refs = []
 		for video in self.streams:
@@ -250,48 +258,10 @@ if __name__ == '__main__':
 
 	dset = gather_videos(SEQ_LEN=4, still=False, shuffle=False)
 
-	for tag in range(10):
-		(frames, mask_pafs, mask_heats), (pafs, heats) = next_video_batch(dset, 1, stop=True)
+	batch = []
+	for bucket in range(dset.buckets):
+		for video in bucket:
+			sample = video.frames[1]
+			box = video.boxes[1]
 
-		FIRST = 0
-		SEQ = 4
-		plt.figure(figsize=(14, 10))
-
-		for ii in range(SEQ):
-			plt.subplot(3, SEQ, ii+1)
-			plt.axis('off')
-			img = frames[FIRST][ii].astype(np.float32)/256
-			plt.imshow(img)
-			msk = cv2.resize(mask_heats[FIRST][ii][:, :, FIRST], (0,0), fx=8, fy=8)
-			plt.imshow(msk, alpha=0.1, vmin=0, vmax=1)
-
-		for ii in range(SEQ):
-			plt.subplot(3, SEQ, SEQ+ii+1)
-			plt.axis('off')
-			img = np.sum(heats[FIRST][ii][:, :, :-1], axis=-1).astype(np.float32)
-			plt.imshow(img)
-			plt.imshow(mask_heats[FIRST][ii][:, :, FIRST], alpha=0.15)
-
-		for ii in range(SEQ):
-			plt.subplot(3, SEQ, 2*SEQ+ii+1)
-			plt.axis('off')
-			sy, sx, _ = pafs[FIRST][ii].shape
-			canvas = np.zeros((sy, sx))
-			for dd in range(38):
-				plane = pafs[FIRST][ii][:, :, dd]
-				canvas[plane > 0] = plane[plane > 0]
-			img = canvas.astype(np.float32)
-			plt.imshow(img)
-			plt.imshow(mask_heats[FIRST][ii][:, :, FIRST], alpha=0.15)
-
-		plt.savefig('samples/%d.png' % tag, bbox_inchex='tight')
-		plt.close()
-
-		# plt.figure(figsize=(14, 10))
-		# for ii in range(38):
-		# 	plt.subplot(5, 8, ii+1)
-		# 	plt.axis('off')
-		# 	plt.imshow(mask_pafs[FIRST][FIRST][:, :, ii])
-
-		# plt.savefig('sample-paf-masks.png', bbox_inchex='tight')
-		# plt.close()
+			counter

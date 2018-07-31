@@ -20,20 +20,52 @@ labels_dir = DATA_DIR + '/labels'
 coco_incl = [0, None, 1, 3, 5, 2, 4, 6, 7, 9, 11, 8, 10, 12, None, None, None, None]
 
 def approx_neck(coords):
+	NOSE_IND = 0
 	NECK_IND = 1
-	rsho, lsho = coords[2], coords[5]
+	rsho, lsho, nose = coords[2], coords[5], coords[NOSE_IND]
 
-	if rsho is None or lsho is None:
-		return None
+	xavg, yavg = [], []
+	if nose is None:
+		if rsho is None or lsho is None:
+			# one of the shoulders missing - too few points
+			return
 
-	for ent in [rsho[0], rsho[1], lsho[0], lsho[1]]:
-		if ent == -1:
-			return None
+		xavg = [rsho[0], lsho[0]]
+		yavg = [rsho[1], lsho[1]]
+	else:
+		if rsho is None and lsho is None:
+			# both shoulders missing - neck alone not enough...
+			return
+
+		for point in [rsho, lsho]:
+			if point is not None:
+				xavg.append(point[0])
+				yavg.append(point[1])
+		xavg.append(nose[0])
+
+	assert len(xavg) > 0 and len(yavg) > 0
 
 	coords[NECK_IND] = [
-		(rsho[0] + lsho[0])/2,
-		(rsho[1] + lsho[1])/2
+		np.mean(xavg), # avg with nose X pos in x axis
+		np.mean(yavg),
 	]
+
+NOSE_IND = 0
+EYE_INDS = [14, 15]
+EAR_INDS = [16, 17]
+PENN_MISSING = EYE_INDS + EAR_INDS
+# def approx_eyes(coords):
+# 	if rsho is None or lsho is None:
+# 		return None
+
+# 	for ent in [rsho[0], rsho[1], lsho[0], lsho[1]]:
+# 		if ent == -1:
+# 			return None
+
+# 	coords[NECK_IND] = [
+# 		(rsho[0] + lsho[0])/2,
+# 		(rsho[1] + lsho[1])/2
+# 	]
 
 def box_center(box):
 	return (box[2] + box[0]) / 2, (box[3] + box[1]) / 2
@@ -221,8 +253,18 @@ def load_refs(batch_refs):
 			assert paf.shape[-1] == 38
 			pafs.append(paf)
 
-			mask_heats.append(create_mask(19, width, height, boxes[frame_ii]))
-			mask_pafs.append(create_mask(38, width, height, boxes[frame_ii]))
+			heat_mask = create_mask(19, width, height, boxes[frame_ii])
+			mask_heats.append(heat_mask)
+
+			for ind in PENN_MISSING:
+				heat_mask[:, :, ind] = 0
+
+			paf_mask = create_mask(38, width, height, boxes[frame_ii])
+			mask_pafs.append(paf_mask)
+
+			for ind, (j_idx1, j_idx2) in enumerate(JointsLoader.joint_pairs):
+				if j_idx1 in PENN_MISSING or j_idx2 in PENN_MISSING:
+					paf_mask[:, :, ind] = 0
 
 		mask_heats = shape_image(mask_heats, boxes, augment, stride=8)
 		mask_pafs = shape_image(mask_pafs, boxes, augment, stride=8)

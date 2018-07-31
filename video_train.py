@@ -99,16 +99,15 @@ if __name__ == '__main__':
 	args = parser.parse_args()
 
 	__format = args.format.split('|')
-	batch_size = args.batch
+	batch_size = args.batch * args.gpus
 
-	model = MODELS[args.arch](bsize=args.batch, time_steps=args.time_steps)
+	model = MODELS[args.arch](bsize=batch_size, time_steps=args.time_steps)
 
 	if args.count:
 		model.summary()
 		exit()
 
 	if args.gpus > 1:
-		batch_size = args.batch * args.gpus
 		model = multigpu(model, gpus=args.gpus)
 
 	lr_multipliers = get_lr_multipliers(model)
@@ -143,6 +142,7 @@ if __name__ == '__main__':
 	cblist = [lrate, Snapshot(args.name, train_gen, __format), ManualLSTMReset()]
 	# cblist = [lrate, ManualLSTMReset()]
 
+	tf.logging.set_verbosity(tf.logging.ERROR)
 	model.fit_generator(train_gen,
 		steps_per_epoch=args.iters,
 		epochs=args.epochs,
