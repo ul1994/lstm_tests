@@ -2,340 +2,246 @@
 # mpl.use('Agg')
 
 import os, sys, math
+import numpy as np
 import cv2
+from cv2 import imread
 from scipy.io import loadmat
-from random import shuffle
+import scipy.ndimage as ndimage
+from random import shuffle, randint, uniform
+from augment import *
+
 sys.path.append('../tf/ver1')
 from training.label_maps import create_heatmap, create_paf
 from training.dataflow import JointsLoader
-import scipy.ndimage as ndimage
+
 
 DATA_DIR = "/beegfs/ua349/lstm/Penn_Action"
 
 frames_dir = DATA_DIR + '/frames'
 labels_dir = DATA_DIR + '/labels'
 
-def gather_videos(SEQ_LEN = 4, still=False, speedup=2, shuffle=True):
-	refs = []
+class Video:
 
+	def __init__(self, seqlen, speedup=1):
+		self.index = 0
 
-	# [nose, neck, Rsho, Relb, Rwri, Lsho, Lelb, Lwri, Rhip, Rkne, Rank, Lhip, Lkne, Lank, Leye, Reye, Lear, Rear, pt19]
-	coco_incl = [0, None, 1, 3, 5, 2, 4, 6, 7, 9, 11, 8, 10, 12, None, None, None, None]
+		self.frames = []
+		self.boxes = []
+		self.coords = []
+		self.coco_coords = []
 
-	def approx_neck(coords):
-		NECK_IND = 1
-		rsho, lsho = coords[2], coords[5]
+		self.bucketid = -1
+		self.speedup = speedup
+		self.seqlen = seqlen
+		self.augment = None
 
-		if rsho is None or lsho is None:
-			return None
+	def add_frame(self, img, box, coords, coco_coords):
+		self.frames.append(img)
+		self.boxes.append(box)
+		self.coords.append(coords)
+		self.coco_coords.append(coco_coords)
 
-		for ent in [rsho[0], rsho[1], lsho[0], lsho[1]]:
-			if ent == -1:
-				return None
+	def ended(self):
+		return self.index + self.seqlen * self.speedup >= len(self.frames)
 
-		coords[NECK_IND] = [
-			(rsho[0] + lsho[0])/2,
-			(rsho[1] + lsho[1])/2
-		]
+	def next_segment(self):
+		assert self.augment is not None
 
-	frame_folders = os.listdir(frames_dir)
-	for __fii, fldr in enumerate(sorted(frame_folders, key=lambda val: int(val))):
+		seg = self.zipped[self.index : self.index+self.seqlen * self.speedup : self.speedup]
+		try:
+			assert len(seg) == self.seqlen
+		except:
+			raise Exception('%d != %d' % (len(seg), self.seqlen))
+		self.index += self.seqlen * self.speedup
 
-		sys.stdout.write('%d/%d ~ %d\r' % (__fii, len(frame_folders), len(refs)))
-		sys.stdout.flush()
+		return seg, self.augment
 
-		flpath = '%s/%s' % (frames_dir, fldr)
-		imgs = [fl for fl in os.listdir(flpath)]
-		imgs = sorted(imgs, key=lambda val: int(val.split('.')[0]))
+	def reset(self):
+		self.index = 0
 
-		lblpath = '%s/%s' % (labels_dir, fldr)
-		mat = loadmat(lblpath)
-		xs, ys, bbox = mat['x'], mat['y'], mat['bbox']
-		vis, dim = mat['visibility'], mat['dimensions']
+		randZoom = uniform(0.5, 1.0)
+		randFlip = uniform(0, 1) > 0.5
+		randDeg = uniform(-45, 45)
+		randX = uniform(-96, 96)
+		randY = uniform(-96, 96)
 
-		# for bii in range(0, len(imgs), SEQ_LEN):
-		end = int(len(imgs)/speedup)
-		for bii in range(0, end, SEQ_LEN):
-			ref = {
-				'frames': [],
-				'boxes': [],
-				'coords': [],
-				'coco_coords': [],
-				'visibility': [],
-			}
+		maxbox = [float('inf'), float('inf'), 0, 0] # x0, y0, xf, yf
 
+		for (x0, y0, xf, yf) in self.boxes:
+			if x0 < maxbox[0]: maxbox[0] = x0
+			if y0 < maxbox[1]: maxbox[1] = y0
+			if xf > maxbox[2]: maxbox[2] = xf
+			if yf > maxbox[3]: maxbox[3] = yf
 
-			if bii + SEQ_LEN >= end:
-				rng = range(end - SEQ_LEN, end)
-			else:
-				rng = range(bii, bii+SEQ_LEN)
-			assert rng is not None
+		# TODO: Instead of fitting to the max bounds, conserve the origin
+		#           and use frame-by-frame masks which are available
+		self.boxes = [maxbox for _ in self.boxes]
 
-			if still:
-				rng = [bii] * SEQ_LEN # all the same ind
-			for ii in rng:
-				ii *= speedup
+		self.zipped = list(
+			zip(self.frames,self.boxes,self.coords,self.coco_coords))
+		assert len(self.zipped) == len(self.frames)
 
-				ref['frames'].append('%s/%s' % (flpath, imgs[ii]))
+		self.augment = (randZoom, randDeg, randX, randY, randFlip)
 
-				try:
-					# case where last bbox can be missing sometimes
-					assert ii < len(bbox)
-					box = bbox[ii]
-				except:
-					print('WARN: Missing bbox %s' % lblpath)
-					print()
-					box = bbox[ii-1] # just sub in last frame
+class MultiVideoDataset:
+	def __init__(self, seqlen=4, speedup=2, shuffle=True, bins=7, plot_buckets=False):
+		refs = []
+		self.speedup = speedup
+
+		frame_folders = os.listdir(frames_dir)
+		videos = []
+		for __fii, fldr in enumerate(sorted(frame_folders, key=lambda val: int(val))):
+
+			sys.stdout.write('%d/%d\r' % (__fii, len(frame_folders)))
+			sys.stdout.flush()
+
+			flpath = '%s/%s' % (frames_dir, fldr)
+			imgs = [fl for fl in os.listdir(flpath)]
+			imgs = sorted(imgs, key=lambda val: int(val.split('.')[0]))
+
+			lblpath = '%s/%s' % (labels_dir, fldr)
+			mat = loadmat(lblpath)
+			xs, ys, bbox = mat['x'], mat['y'], mat['bbox']
+			vis, dim = mat['visibility'], mat['dimensions']
+
+			vidobj = Video(speedup=speedup, seqlen=seqlen)
+			videos.append(vidobj)
+
+			assert len(vidobj.frames) == 0
+
+			for frame_ii in range(len(imgs)):
+
+				if frame_ii <= len(bbox) - 1:
+					box = bbox[frame_ii]
+				else:
+					box = bbox[-1] # just sub in last frame
 				box = [val+1 for val in box]
-				ref['boxes'].append(box)
-				coords = []
-				for (xx, yy) in zip(xs[ii], ys[ii]):
-					xx = max(0, xx-1)
-					yy = max(0, yy-1)
 
-					if xx == 0 or yy == 0:
-						# invalid coord
+				coords = []
+				for (xx, yy) in zip(xs[frame_ii], ys[frame_ii]):
+					if xx - 1 <= 0 or yy - 1 <= 0:
 						coords.append(None)
 					else:
-						coords.append((xx, yy))
-
-				ref['coords'].append(coords)
+						coords.append((xx-1, yy-1))
 
 				coco_coords = [None if ind is None else coords[ind] for ind in coco_incl]
 				approx_neck(coco_coords)
-				ref['coco_coords'].append(coco_coords)
 
-				ref['visibility'].append(vis[ii])
-			assert len(ref['frames']) == SEQ_LEN
-			assert len(ref['coords']) == SEQ_LEN
-			assert len(ref['coco_coords']) == SEQ_LEN
+				vidobj.add_frame(
+					'%s/%s' % (flpath, imgs[frame_ii]),
+					box,
+					coords,
+					coco_coords)
 
-			refs.append(ref)
-	shuffed = refs
-	if shuffle:
-		shuffle(shuffed)
-	return [shuffed, refs]
+			assert len(vidobj.frames) == len(imgs)
+			assert len(vidobj.boxes) == len(imgs)
 
-import cv2
-from cv2 import imread
-import numpy as np
-import random
+		assert len(videos) > 0
 
-def box_center(box):
-	return (box[2] + box[0]) / 2, (box[3] + box[1]) / 2
+		binsize = int(len(videos) / bins)
 
-def create_mask(dims, height, width, bbox, stride=8, pad=16):
-	pad = int(pad / stride)
-	x0, y0, xf, yf = (np.array(bbox) / stride)
-	canvas = np.zeros((height, width, dims))
-	canvas[int(y0)-pad:int(yf)+pad, int(x0)-pad:int(xf)+pad] = 1
-	assert np.max(canvas) > 0
-	return canvas
+		if plot_buckets:
+			vidlens = [len(obj.frames) for obj in videos]
+			dist = np.zeros(np.max(vidlens) + 1)
+			for ll in vidlens:
+				dist[ll] += 1
 
-def shape_image(imgs, bbox, spec, stride=1):
-	zoom, rotate, xoff, yoff = spec
-	FIRST = 0
-	xoff = xoff / stride
-	yoff = yoff / stride
+			import matplotlib.pyplot as plt
 
-	imgs = np.array(imgs)
-	sized = [cv2.resize(img.astype(np.float32), (0,0), fx=zoom, fy=zoom) for img in imgs]
-	sized = np.array(sized).astype(imgs[FIRST].dtype)
+			plt.figure(figsize=(14, 10))
+			plt.title('Bucket size: %d' % binsize)
+			plt.plot(dist)
+			agg = 0
+			for ii, unit in enumerate(dist):
+				agg += unit
+				if agg > binsize:
+					agg = 0
+					plt.plot([ii, ii], [0, 50], color='red')
 
-	canvas = np.zeros(imgs.shape, dtype=imgs.dtype)
-	canv_width = canvas[FIRST].shape[1]
-	canv_height = canvas[FIRST].shape[0]
-	sizedBox = np.array(bbox[FIRST]) / stride # bbox affected by zoom
-	x0, y0, xf, yf = sizedBox
+			plt.show()
 
-	boxX, boxY = (x0 + xf) / 2, (y0 + yf) / 2
-	cX = -boxX # center p0 at origin
-	cY = -boxY
-	cX *= zoom # zoom at origin
-	cY *= zoom
-	cX += canv_width/2 # return p0 to canvas center
-	cY += canv_height/2
-	cX += xoff # apply offset
-	cY += yoff
+		buckets = []
+		videos = sorted(videos, key=lambda obj: len(obj.frames))
+		for ii in range(0, binsize * bins, binsize):
+			end = ii + binsize
+			if len(videos) - ii < binsize:
+				end = len(videos)
+			buckets.append(videos[ii:end])
 
-	width = sized[FIRST].shape[1]
-	height = sized[FIRST].shape[0]
+		assert len(buckets) == bins
 
-	fill_Y0 = max(0, cY)
-	fill_YF = min(canv_height, cY+height)
-	fill_X0 = max(0, cX)
-	fill_XF = min(canv_width, cX+width)
+		# indicate which video belongs to which
+		for bii in range(bins):
+			for vii in range(len(buckets[bii])):
+				buckets[bii][vii].bucketid = bii
 
-	subj_Y0 = max(0, -cY)
-	subj_X0 = max(0, -cX)
+		if shuffle: # all buckets are initially shuffled
+			for ii in range(bins): shuffle(buckets[ii])
 
-	fill = canvas[:, int(fill_Y0):int(fill_YF), int(fill_X0):int(fill_XF), :]
-	subj = sized[:, int(subj_Y0):int(subj_Y0+fill.shape[1]), int(subj_X0):int(subj_X0+fill.shape[2]), :]
+		used = [list() for ii in range(bins)]
+		streams = []
 
-	try: assert fill.shape == subj.shape
-	except:
-		print(imgs[FIRST].shape, sized[FIRST].shape)
-		print(cX, cY)
-		print(xoff, yoff)
-		print(fill_YF, fill_Y0, subj_YF, subj_Y0)
-		print(fill_XF, fill_X0, subj_XF, subj_X0)
-		raise Exception('ERR: %s -> %s' % (subj.shape, fill.shape))
+		self.streams = streams
+		self.buckets = buckets
+		self.used = used
 
-	fill[:, :, :, :] = subj[:, :, :, :]
+	def sample_bucket(self, bind, bsize):
+		if len(self.buckets[bind]) < bsize:
+			# reset bucket if almost empty
+			print(' [!] WARN: Reached end of bucket: %d!' % bind)
+			ulen, blen = len(self.used[bind]), len(self.buckets[bind])
+			full_bucket = self.used[bind] + self.buckets[bind]
+			shuffle(full_bucket)
+			self.buckets[bind] = full_bucket # refilling
+			assert len(self.buckets[bind]) == ulen + blen
+			self.used[bind] = []
 
+		videos = self.buckets[bind][:bsize]
+		self.buckets[bind] = self.buckets[bind][bsize:] # dequeue videos
+		self.used[bind] += videos
 
-	# imsize = canvas.shape[1:3]
-	# pivot = np.array(imsize) / 2 + np.array([yoff, xoff])
-	# padX = [imsize[1] - int(pivot[1]), int(pivot[1])]
-	# padY = [imsize[0] - int(pivot[0]), int(pivot[0])]
-	# padded = np.pad(canvas, [[0, 0], padY, padX, [0, 0]], 'constant')
-	# padded = ndimage.rotate(
-	# 	padded.astype(np.float32),
-	# 	rotate, axes=(2, 1), reshape=False).astype(imgs.dtype)
+		return videos
 
-	# canvas = padded[:, padY[0]:-padY[1], padX[0]:-padX[1], :]
+	def next_batch(self, bsize=6, format='heatpaf', stop=False):
 
-	return canvas
+		if len(self.streams) > 0 and bsize != len(self.streams):
+			print(' [!] WARN: batch size changed!')
+			self.clear()
 
-def rotate_around_point_highperf(xy, radians, origin=(0, 0)):
-	"""Rotate a point around a given point.
+		vid_ended = any([vid.ended() for vid in self.streams]) or len(self.streams) == 0
+		if vid_ended:
+			# TODO: collect the videos that are done to used buckets
+			# if videos are done or stream is empty, get a new set of videos
+			bind = randint(0, len(self.buckets)-1)
+			videos = self.sample_bucket(bind, bsize)
 
-	I call this the "high performance" version since we're caching some
-	values that are needed >1 time. It's less readable than the previous
-	function but it's faster.
-	"""
-	x, y = xy
-	offset_x, offset_y = origin
-	adjusted_x = (x - offset_x)
-	adjusted_y = (y - offset_y)
-	cos_rad = math.cos(radians)
-	sin_rad = math.sin(radians)
-	qx = offset_x + cos_rad * adjusted_x + sin_rad * adjusted_y
-	qy = offset_y + -sin_rad * adjusted_x + cos_rad * adjusted_y
+			# this will reset the frame index and also augmentation
+			for vid in videos: vid.reset()
 
-	return qx, qy
+			# clear the stream - save consumed videos
+			for vid in self.streams:
+				self.used[vid.bucketid].append(vid)
 
-def shape_coords(coords, bbox, imsize, spec):
-	zoom, rotate, xoff, yoff = spec
-	modded = []
+			# activate fetched videos
+			self.streams = videos
 
-	sizedBox = np.array(bbox) # bbox affected by zoom
-	x0, y0, xf, yf = sizedBox
+		# list of (segment, augment) tuples
+		batch_refs = []
+		for video in self.streams:
+			batch_refs.append(video.next_segment())
 
-	boxX, boxY = (x0 + xf) / 2, (y0 + yf) / 2
-	canv_height, canv_width = imsize[:2]
-	cX = canv_width / 2 - boxX
-	cY = canv_height / 2 - boxY
+		assert len(batch_refs) > 0
 
-	for point in coords:
-		if point is None:
-			modded.append(None)
-			continue
+		ins, outs = load_refs(batch_refs)
+		return ins, outs, vid_ended
 
-		jx, jy = point
+	def clear(self):
+		# clear the stream - save consumed videos
+		for vid in self.streams:
+			self.used[vid.bucketid].append(vid)
 
-		jx -= boxX # send coords to origin centered at box
-		jy -= boxY
-		jx *= zoom # scale at origin
-		jy *= zoom
-		# jx, jy = rotate_around_point_highperf(
-		# 	(jx, jy),
-		# 	math.pi * rotate/180,
-		# 	(0, 0)) # rotate at origin
+		self.streams = []
 
-		jx += canv_width/2 # return it to canvas center
-		jy += canv_height/2
-		jx += xoff # offset
-		jy += yoff
-
-		modded.append([jx, jy])
-
-	modded = np.array(modded)
-
-	return modded
-def crop(imgs, tosize):
-	imsize = imgs[0].shape
-
-	canvas = np.zeros(
-		(len(imgs), max(imsize[0], tosize), max(imsize[1], tosize), imsize[-1]),
-		dtype=imgs[0].dtype)
-	dy = int((canvas.shape[1] - imsize[0]) / 2)
-	dx = int((canvas.shape[2] - imsize[1]) / 2)
-	assert dy >= 0
-	assert dx >= 0
-	canvas[:, dy:dy+imsize[0], dx:dx+imsize[1], :] = imgs
-
-	dy = int((canvas.shape[1] - tosize) / 2)
-	dx = int((canvas.shape[2] - tosize) / 2)
-	assert dy >= 0
-	assert dx >= 0
-
-	return canvas[:, dy:dy+tosize, dx:dx+tosize, :].copy()
-
-def next_video_batch(refs, bsize=6, format='heatpaf', stop=False):
-	brefs = refs[0][:bsize]
-	if not stop:
-		refs[0] = refs[0][bsize:]
-
-	if len(refs[0]) < bsize:
-		shuffed = refs[1]
-		shuffle(shuffed)
-		refs[0] = shuffed
-
-	videos = []
-	masks = [[], []]
-	targets = [[], []]
-
-	for ref in brefs:
-		imgs, heats, pafs, mask_heats, mask_pafs = [], [], [], [], []
-
-		randZoom = random.uniform(0.5, 1.0)
-		# randDeg = random.uniform(-45, 45)
-		randDeg = 45
-		randX = random.uniform(-96, 96)
-		randY = random.uniform(-96, 96)
-
-		spec = (randZoom, randDeg, randX, randY)
-
-		imgs = [imread(path) for path in ref['frames']]
-		imsize = imgs[0].shape
-		imgs = shape_image(imgs, ref['boxes'], spec)
-
-		width, height = int(imgs[0].shape[0] / 8), int(imgs[0].shape[1] / 8)
-		for frame_ii in range(len(ref['frames'])):
-			coords = shape_coords(
-				ref['coco_coords'][frame_ii],
-				ref['boxes'][frame_ii],
-				imsize, spec)
-			heats.append(create_heatmap(19, width, height, [coords], sigma=7.0, stride=8))
-			pafs.append(create_paf(38, width, height, [coords], threshold=1.0, stride=8))
-
-			mask_heats.append(create_mask(19, width, height, ref['boxes'][frame_ii]))
-			mask_pafs.append(create_mask(38, width, height, ref['boxes'][frame_ii]))
-
-		mask_heats = shape_image(mask_heats, ref['boxes'], spec, stride=8)
-		mask_pafs = shape_image(mask_pafs, ref['boxes'], spec, stride=8)
-
-		imgs = crop(imgs, 368)
-		mask_heats = crop(mask_heats, 46)
-		mask_pafs = crop(mask_pafs, 46)
-		heats = crop(heats, 46)
-		pafs = crop(pafs, 46)
-
-		videos.append(imgs)
-		masks[0].append(mask_heats)
-		masks[1].append(mask_pafs)
-		targets[0].append(heats)
-		targets[1].append(pafs)
-
-	return (
-		np.array(videos),
-		np.array(masks[1]),
-		np.array(masks[0]),
-	), (
-		np.array(targets[1]),
-		np.array(targets[0]),
-	)
 
 if __name__ == '__main__':
 	import matplotlib.pyplot as plt
