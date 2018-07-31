@@ -11,7 +11,7 @@ from keras.initializers import random_normal,constant
 
 def relu(): return Activation('relu')
 
-def conv_lstm(nf, ks, name, weight_decay, first=False, return_sequences=True):
+def conv_lstm(nf, ks, name, weight_decay, first=False, return_sequences=True, stateful=False):
 	kernel_reg = l2(weight_decay[0]) if weight_decay else None
 	bias_reg = l2(weight_decay[1]) if weight_decay else None
 
@@ -20,7 +20,8 @@ def conv_lstm(nf, ks, name, weight_decay, first=False, return_sequences=True):
 					bias_regularizer=bias_reg,
 					kernel_initializer=random_normal(stddev=0.01),
 					bias_initializer=constant(0.0),
-					return_sequences=return_sequences)
+					return_sequences=return_sequences,
+					stateful=stateful)
 
 def conv(nf, ks, name, weight_decay, first=False):
 	kernel_reg = l2(weight_decay[0]) if weight_decay else None
@@ -162,10 +163,10 @@ def stageT_block_lstm(x, num_p, stage, branch, weight_decay):
 
 	return x
 
-def stageJoin_block_lstm(x, num_p, stage, branch, weight_decay):
-	x = conv_lstm(128, 7, "Mconv1_stage%d_L%d" % (stage, branch), (weight_decay, 0))(x)
+def stageJoin_block_lstm(x, num_p, stage, branch, weight_decay, stateful=False):
+	x = conv_lstm(128, 7, "Mconv1_stage%d_L%d" % (stage, branch), (weight_decay, 0), stateful=stateful)(x)
 	x = TimeDistributed(relu())(x)
-	x = conv_lstm(128, 7, "Mconv2_stage%d_L%d" % (stage, branch), (weight_decay, 0), return_sequences=False)(x)
+	x = conv_lstm(128, 7, "Mconv2_stage%d_L%d" % (stage, branch), (weight_decay, 0), stateful=stateful, return_sequences=False)(x)
 
 	x = relu()(x)
 	x = conv(128, 7, "Mconv3_stage%d_L%d" % (stage, branch), (weight_decay, 0))(x)

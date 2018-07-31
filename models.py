@@ -334,22 +334,22 @@ def apply_mask_full(x, mask1, mask2, num_p, stage, branch):
         w = Multiply(name=w_name)([x, mask2])  # vec_heat
     return w
 
-def mod_v3(time_steps=4, imsize=368, outsize=46, weight_decay=5e-4, trainable=True):
+def mod_v3(bsize=6, time_steps=4, imsize=368, outsize=46, weight_decay=5e-4, trainable=True):
 
 	stages = 6
 	np_branch1 = 38
 	np_branch2 = 19
 
-	img_input_shape = (time_steps, imsize, imsize, 3)
-	vec_input_shape = (time_steps, outsize, outsize, 38)
-	heat_input_shape = (time_steps, outsize, outsize, 19)
+	img_input_shape = (bsize, time_steps, imsize, imsize, 3)
+	vec_input_shape = (bsize, time_steps, outsize, outsize, 38)
+	heat_input_shape = (bsize, time_steps, outsize, outsize, 19)
 
 	inputs = []
 	outputs = []
 
-	img_input = Input(shape=img_input_shape)
-	vec_mask = Input(shape=vec_input_shape)
-	heat_mask = Input(shape=heat_input_shape)
+	img_input = Input(shape=img_input_shape[1:], batch_shape=img_input_shape)
+	vec_mask = Input(shape=vec_input_shape[1:], batch_shape=vec_input_shape)
+	heat_mask = Input(shape=heat_input_shape[1:], batch_shape=heat_input_shape)
 
 	inputs.append(img_input)
 	inputs.append(vec_mask)
@@ -392,11 +392,11 @@ def mod_v3(time_steps=4, imsize=368, outsize=46, weight_decay=5e-4, trainable=Tr
 
 		elif sn == 3:
 			# stage SN - branch 1 (PAF)
-			stageT_branch1_out = stageJoin_block_lstm(x, np_branch1, sn, 1, weight_decay)
+			stageT_branch1_out = stageJoin_block_lstm(x, np_branch1, sn, 1, weight_decay, stateful=True)
 			w1 = apply_mask_full(stageT_branch1_out, get_last(vec_mask), get_last(heat_mask), np_branch1, sn, 1)
 
 			# stage SN - branch 2 (confidence maps)
-			stageT_branch2_out = stageJoin_block_lstm(x, np_branch2, sn, 2, weight_decay)
+			stageT_branch2_out = stageJoin_block_lstm(x, np_branch2, sn, 2, weight_decay, stateful=True)
 			w2 = apply_mask_full(stageT_branch2_out, get_last(vec_mask), get_last(heat_mask), np_branch2, sn, 2)
 
 			outputs.append(w1)

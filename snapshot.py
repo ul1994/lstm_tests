@@ -46,50 +46,65 @@ class Snapshot(keras.callbacks.Callback):
 					raise Exception('Not supported')
 				plt.imshow(np.sum(target[:, :, :-1].astype(np.float32), axis=-1))
 		else:
-			raise Exception('Not implemented')
+			FIRST_BATCH = 0
+			SEQLEN = len(ins[0][0])
+			plt.figure(figsize=(14, 10))
+			for tii in range(SEQLEN):
+				plt.subplot(3, SEQLEN, tii+1)
+				if tii == 0: plt.gca().set_title('Epoch: %d   Batch: %d' % (self.ecount, self.bcount))
+				plt.axis('off')
+				img = ins[0][FIRST_BATCH][tii] # first batch, iterate over seq
+				img = cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_BGR2RGB)
+				plt.imshow(img.astype(np.float32)/256)
+				mask = ins[2][FIRST_BATCH][tii][:, :, -1] # first batch, iterate over seq
+				mask = cv2.resize(mask, (0,0), fx=8, fy=8)
+				plt.imshow(mask, alpha=0.5)
 
-		# if not self.ts or self.time_format == 'last':
-		# 	plt.figure(figsize=(14, 7))
-		# 	for ii in range(self.time_steps):
-		# 		if ii == 0: plt.gca().set_title('Epoch: %d   Batch: %d' % (self.ecount, self.bcount))
-		# 		plt.subplot(3, self.time_steps, ii+1)
-		# 		plt.axis('off')
-		# 		img = images[ii]
-		# 		if self.ts: # will be a tseries for last format
-		# 			img = img[0]
-		# 		plt.imshow(img.astype(np.float32)/255)
-
-		# 	for ii in range(self.time_steps):
-		# 		plt.subplot(3, self.time_steps, self.time_steps*1+ii+1)
-		# 		plt.axis('off')
-		# 		res = results[ii]
-		# 		# in last-format, output will be for 1 frame even though it is a tseries
-		# 		plt.imshow(np.sum(res[:, :, :-1], axis=-1))
-
-		# 	for ii in range(self.time_steps):
-		# 		plt.subplot(3, self.time_steps, self.time_steps*2+ii+1)
-		# 		plt.axis('off')
-		# 		res = targets[ii]
-		# 		plt.imshow(np.sum(res[:, :, :-1].astype(np.float32), axis=-1), vmin=0, vmax=1)
-
-		# else:
-		# 	plt.figure(figsize=(14, 10))
-		# 	for ii in range(self.time_steps):
-		# 		plt.subplot(3, self.time_steps, ii+1)
-		# 		if ii == 0: plt.gca().set_title('Epoch: %d   Batch: %d' % (self.ecount, self.bcount))
-		# 		plt.axis('off')
-		# 		img = images[1][ii]
-		# 		plt.imshow(img.astype(np.float32)/256)
-		# 	for ii in range(self.time_steps):
-		# 		plt.subplot(3, self.time_steps, self.time_steps+ii+1)
-		# 		plt.axis('off')
-		# 		res = results[1][ii]
-		# 		plt.imshow(np.sum(res[:, :, :-1].astype(np.float32), axis=-1), vmin=0, vmax=1)
-		# 	for ii in range(self.time_steps):
-		# 		plt.subplot(3, self.time_steps, self.time_steps*2+ii+1)
-		# 		plt.axis('off')
-		# 		res = targets[1][ii]
-		# 		plt.imshow(np.sum(res[:, :, :-1].astype(np.float32), axis=-1), vmin=0, vmax=1)
+			for tii in range(SEQLEN):
+				plt.subplot(3, SEQLEN, SEQLEN+tii+1)
+				plt.axis('off')
+				if outform == 'last':
+					if tii == SEQLEN-1: # last
+						# get the actual last heat out ~ network output
+						LAST_LAYER = -1
+						heat = results[LAST_LAYER][FIRST_BATCH]
+					else:
+						# get intermediate sequential outs from middle layers
+						SECOND_LAYER = 1
+						STACK_PATTERN = 2
+						heat = results[SECOND_LAYER * STACK_PATTERN + 1][FIRST_BATCH][tii]
+				else: raise Exception('Not supported')
+				plt.imshow(np.sum(heat[:, :, :-1].astype(np.float32), axis=-1))
+			for tii in range(SEQLEN):
+				plt.subplot(3, SEQLEN, 2*SEQLEN+tii+1)
+				plt.axis('off')
+				if outform == 'last':
+					if tii == SEQLEN-1: # last
+						# get the actual last heat out ~ network output
+						LAST_LAYER = -2
+						limbs = results[LAST_LAYER][FIRST_BATCH]
+					else:
+						# get intermediate sequential outs from middle layers
+						SECOND_LAYER = 1
+						STACK_PATTERN = 2
+						limbs = results[SECOND_LAYER * STACK_PATTERN][FIRST_BATCH][tii]
+				else: raise Exception('Not supported')
+				plt.imshow(np.sum(limbs.astype(np.float32), axis=-1))
+			# for tii in range(SEQLEN):
+			# 	plt.subplot(3, SEQLEN, SEQLEN*2+tii+1)
+			# 	plt.axis('off')
+			# 	if outform == 'last':
+			# 		if tii == SEQLEN-1: # last
+			# 			# get the actual last heat out ~ network output
+			# 			LAST_LAYER = -1
+			# 			target = results[LAST_LAYER][FIRST_BATCH]
+			# 		else:
+			# 			# get intermediate sequential outs from middle layers
+			# 			SECOND_LAYER = 1
+			# 			STACK_PATTERN = 2
+			# 			target = results[SECOND_LAYER * STACK_PATTERN + 1][FIRST_BATCH][tii]
+			# 	else: raise Exception('Not supported')
+			# 	plt.imshow(np.sum(target[:, :, :-1].astype(np.float32), axis=-1))
 
 		plt.savefig('previews/%s' % save_name, bbox_inches='tight')
 		plt.close()

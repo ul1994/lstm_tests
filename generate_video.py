@@ -10,15 +10,17 @@ import scipy.ndimage as ndimage
 from random import shuffle, randint, uniform
 from augment import *
 
+shuff = shuffle
+
 sys.path.append('../tf/ver1')
 from training.label_maps import create_heatmap, create_paf
 from training.dataflow import JointsLoader
 
 
-DATA_DIR = "/beegfs/ua349/lstm/Penn_Action"
+PENN_DIR = "/beegfs/ua349/lstm/Penn_Action"
 
-frames_dir = DATA_DIR + '/frames'
-labels_dir = DATA_DIR + '/labels'
+frames_dir = PENN_DIR + '/frames'
+labels_dir = PENN_DIR + '/labels'
 
 class Video:
 
@@ -176,7 +178,7 @@ class MultiVideoDataset:
 				buckets[bii][vii].bucketid = bii
 
 		if shuffle: # all buckets are initially shuffled
-			for ii in range(bins): shuffle(buckets[ii])
+			for ii in range(bins): shuff(buckets[ii])
 
 		used = [list() for ii in range(bins)]
 		streams = []

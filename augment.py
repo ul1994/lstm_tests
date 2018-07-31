@@ -239,11 +239,11 @@ def load_refs(batch_refs):
 		targets[0].append(heats)
 		targets[1].append(pafs)
 
-	return (
+	return [
 		np.array(videos),
 		np.array(masks[1]),
 		np.array(masks[0]),
-	), (
+	], [
 		np.array(targets[1]),
 		np.array(targets[0]),
-	)
+	]

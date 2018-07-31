@@ -12,6 +12,7 @@ import argparse
 import tensorflow as tf
 from tensorpack.dataflow.common import BatchData, MapData
 import keras.backend as K
+import keras
 from keras.models import Model, Sequential
 from keras.layers.merge import Concatenate
 from keras.applications.vgg19 import VGG19
@@ -20,7 +21,7 @@ from keras.callbacks import LearningRateScheduler, ModelCheckpoint, CSVLogger, T
 from keras.utils import multi_gpu_model as multigpu
 
 from components import *
-sys.path.append('/scratch/ua349/pose/tf/ver1')
+sys.path.append('../tf/ver1')
 from training.optimizers import MultiSGD
 from training.dataset import get_dataflow
 
@@ -29,39 +30,56 @@ from still_train import *
 from models import *
 from generate_video import *
 
+DATA_DIR = '/beegfs/ua349/lstm/coco'
+
+# if this is true, acknowledge it (set to False) and reset lstm layers
+RESET_FLAG = False
+
+class ManualLSTMReset(keras.callbacks.Callback):
+	def __init__(self):
+		pass
+
+	def on_batch_begin(self, batch, logs=None):
+		global RESET_FLAG
+		if RESET_FLAG:
+			print(' [*] WARN: Resetting internal LSTM states...')
+			# flag ack and reset lstms
+			self.model.reset_states()
+			RESET_FLAG = False
+
+def stack_outputs(pafs, heats, size=6, collapse=2):
+	return [
+		pafs, heats,
+		pafs, heats,
+		pafs[:, -1], heats[:, -1], # these
+
+		pafs[:, -1], heats[:, -1],
+		pafs[:, -1], heats[:, -1],
+		pafs[:, -1], heats[:, -1],
+	]
+
 def mix_gen(df, dset, batch_size, format='last', every=2):
+	global RESET_FLAG
+
 	while True:
-		for (inp, out) in df.get_data():
-			(video_frames, mask_pafs, mask_heats), (video_pafs, video_heats) = next_video_batch(dset, batch_size)
+		inp, out, video_ended = dset.next_batch(bsize=batch_size)
 
-			numtargs = 6 * 2
-			videos, masks = [], [[], []]
-			targets = [list() for ii in range(numtargs)]
+		if video_ended:
+			# mix in coco image dataset in between videos
+			# FIXME: what happens when df runs out of data?
+			RESET_FLAG = True # reset lstm for static videos
+			for (coco_inp, coco_out) in df.get_data():
 
-			for batch_ii in range(batch_size):
-				if batch_ii % every == 0:
-					videos.append(inp[0][batch_ii])
-					masks[0].append(inp[1][batch_ii])
-					masks[1].append(inp[2][batch_ii])
-					for jj in range(numtargs):
-						targets[jj].append(out[jj][batch_ii])
-				else:
-					videos.append(video_frames[batch_ii])
-					masks[0].append(mask_pafs[batch_ii])
-					masks[1].append(mask_heats[batch_ii])
-					for jj in range(numtargs):
-						targets[jj].append(targs[batch_ii])
+				# print(coco_inp[0].shape, coco_inp[1].shape, coco_inp[2].shape)
+				# print(coco_out[0].shape, coco_out[1].shape)
+				yield coco_inp, coco_out
+				break
 
-			videos = np.array(videos)
-			masks[0] = np.array(masks[0])
-			masks[1] = np.array(masks[1])
-			for targ_ii in range(numtargs):
-				targets[targ_ii] = np.array(targets[targ_ii])
-				if format == 'last' and targ_ii > 4 * 2:
-					targets[targ_ii] = targets[targ_ii][-1] # reduce to last frame
+		RESET_FLAG = video_ended
 
-			assert len(targets) == numtargs
-			yield [videos, masks[0], masks[1]], targets
+		out = stack_outputs(out[0], out[1])
+
+		yield inp, out
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
@@ -70,7 +88,9 @@ if __name__ == '__main__':
 	parser.add_argument('--dataset', default='train', type=str)
 	parser.add_argument('--format', default='sequence', required=True, type=str)
 
+	parser.add_argument('--speedup', default=1, type=int)
 	parser.add_argument('--epochs', default=5, type=int)
+	parser.add_argument('--iters', default=100 * 1000, type=int)
 	parser.add_argument('--time_steps', default=4, type=int)
 
 	parser.add_argument('--gpus', default=1, type=int)
@@ -81,7 +101,7 @@ if __name__ == '__main__':
 	__format = args.format.split('|')
 	batch_size = args.batch
 
-	model = MODELS[args.arch](time_steps=args.time_steps)
+	model = MODELS[args.arch](bsize=args.batch, time_steps=args.time_steps)
 
 	if args.count:
 		model.summary()
@@ -117,13 +137,16 @@ if __name__ == '__main__':
 	print('Collected %d val samples...' % train_samples)
 	train_df = batch_dataflow(df, batch_size, time_steps=args.time_steps, format=__format)
 
-	dset = gather_videos(SEQ_LEN=args.time_steps, still=False)
+	dset = MultiVideoDataset(shuffle=True, bins=7, seqlen=args.time_steps, speedup=args.speedup)
 	train_gen = mix_gen(train_df, dset, batch_size)
 
+	cblist = [lrate, Snapshot(args.name, train_gen, __format), ManualLSTMReset()]
+	# cblist = [lrate, ManualLSTMReset()]
+
 	model.fit_generator(train_gen,
-		steps_per_epoch=train_samples // batch_size,
+		steps_per_epoch=args.iters,
 		epochs=args.epochs,
-		callbacks=[lrate, Snapshot(args.name, train_gen, __format, stills=True)],
+		callbacks=cblist,
 		use_multiprocessing=False,
 		initial_epoch=0,
 		verbose=1)
