@@ -48,7 +48,7 @@ class Video:
 		self.coco_coords.append(coco_coords)
 
 	def ended(self):
-		return self.index + self.seqlen * self.speedup >= len(self.frames)
+		return self.index + self.seqlen * self.speedup >= len(self.zipped)
 
 	def next_segment(self):
 		assert self.augment is not None
@@ -58,14 +58,14 @@ class Video:
 			assert len(seg) == self.seqlen
 		except:
 			raise Exception('%d != %d' % (len(seg), self.seqlen))
-		self.index += self.seqlen * self.speedup
+		self.index += self.speedup
 
 		return seg, self.augment
 
 	def reset(self):
 		self.index = 0
 
-		randZoom = uniform(0.5, 1.0)
+		randZoom = uniform(0.75, 1.25)
 		randFlip = uniform(0, 1) > 0.5
 		randDeg = uniform(-45, 45)
 		randX = uniform(-96, 96)
@@ -304,6 +304,18 @@ class MultiVideoDataset:
 		self.used[bind] += videos
 
 		return videos
+
+	def stream_status(self):
+		fresh = 0
+		for buck in self.buckets:
+			fresh += len(buck)
+		used = 0
+		for buck in self.used:
+			used += len(buck)
+		print(' [*] Usage: %d/%d' % (used, used + fresh))
+
+		for ii, video in enumerate(self.streams):
+			print('     [*] Stream %d: %s' % (ii, video.frames[0]))
 
 	def next_batch(self, bsize=6, format='heatpaf', stop=False):
 

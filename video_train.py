@@ -42,6 +42,7 @@ class ManualLSTMReset(keras.callbacks.Callback):
 	def on_batch_begin(self, batch, logs=None):
 		global RESET_FLAG
 		if RESET_FLAG:
+			print()
 			print(' [*] WARN: Resetting internal LSTM states...')
 			# flag ack and reset lstms
 			self.model.reset_states()
@@ -68,12 +69,7 @@ def mix_gen(df, dset, batch_size, format='last', every=2):
 			# mix in coco image dataset in between videos
 			# FIXME: what happens when df runs out of data?
 			RESET_FLAG = True # reset lstm for static videos
-			for (coco_inp, coco_out) in df.get_data():
-
-				# print(coco_inp[0].shape, coco_inp[1].shape, coco_inp[2].shape)
-				# print(coco_out[0].shape, coco_out[1].shape)
-				yield coco_inp, coco_out
-				break
+			dset.stream_status()
 
 		RESET_FLAG = video_ended
 
