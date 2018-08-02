@@ -67,11 +67,19 @@ PENN_MISSING = EYE_INDS + EAR_INDS
 def box_center(box):
 	return (box[2] + box[0]) / 2, (box[3] + box[1]) / 2
 
-def create_mask(dims, height, width, bbox, stride=8, pad=16):
-	pad = int(pad / stride)
-	x0, y0, xf, yf = (np.array(bbox) / stride)
+def create_mask(dims, height, width, mask, stride=8, pad=16):
 	canvas = np.zeros((height, width, dims))
-	canvas[max(int(y0)-pad, 0):int(yf)+pad, max(int(x0)-pad, 0):int(xf)+pad] = 1
+	h0, w0 = mask.shape
+	sized = cv2.resize(mask, (0,0), fx=width/w0, fy=height/h0)
+
+	try:
+		assert sized.shape == (height, width)
+	except:
+		raise Exception('%s != %s' % (sized.shape, (height, width)))
+
+	for ii in range(dims):
+		canvas[:, :, ii] = sized
+
 	assert np.max(canvas) > 0
 	return canvas
 
@@ -231,7 +239,7 @@ def load_refs(batch_refs):
 
 	for refs in batch_refs:
 		zipped, augment = refs
-		frames, boxes, _, coco_coords = zip(*zipped)
+		frames, boxes, __masks, _, coco_coords = zip(*zipped)
 		imgs, heats, pafs, mask_heats, mask_pafs = [], [], [], [], []
 
 		imgs = [imread(path) for path in frames]
@@ -250,13 +258,13 @@ def load_refs(batch_refs):
 			assert paf.shape[-1] == 38
 			pafs.append(paf)
 
-			heat_mask = create_mask(19, width, height, boxes[frame_ii])
+			heat_mask = create_mask(19, width, height, __masks[frame_ii])
 			mask_heats.append(heat_mask)
 
 			for ind in PENN_MISSING:
 				heat_mask[:, :, ind] = 0
 
-			paf_mask = create_mask(38, width, height, boxes[frame_ii])
+			paf_mask = create_mask(38, width, height, __masks[frame_ii])
 			mask_pafs.append(paf_mask)
 
 			for ind, (j_idx1, j_idx2) in enumerate(JointsLoader.joint_pairs):

@@ -31,6 +31,7 @@ class Video:
 
 		self.frames = []
 		self.boxes = []
+		self.masks = []
 		self.coords = []
 		self.coco_coords = []
 
@@ -39,9 +40,10 @@ class Video:
 		self.seqlen = seqlen
 		self.augment = None
 
-	def add_frame(self, img, box, coords, coco_coords):
+	def add_frame(self, img, box, mask, coords, coco_coords):
 		self.frames.append(img)
 		self.boxes.append(box)
+		self.masks.append(mask)
 		self.coords.append(coords)
 		self.coco_coords.append(coco_coords)
 
@@ -82,7 +84,7 @@ class Video:
 		self.boxes = [maxbox for _ in self.boxes]
 
 		self.zipped = list(
-			zip(self.frames,self.boxes,self.coords,self.coco_coords))
+			zip(self.frames,self.boxes,self.masks,self.coords,self.coco_coords))
 		assert len(self.zipped) == len(self.frames)
 
 		self.augment = (randZoom, randDeg, randX, randY, randFlip)
@@ -92,6 +94,7 @@ def fetch_penn(seqlen, speedup):
 
 	frames_dir = PENN_DIR + '/frames'
 	labels_dir = PENN_DIR + '/labels'
+	masks_dir = PENN_DIR + '/masks'
 
 	frame_folders = os.listdir(frames_dir)
 	videos = []
@@ -103,6 +106,9 @@ def fetch_penn(seqlen, speedup):
 		flpath = '%s/%s' % (frames_dir, fldr)
 		imgs = [fl for fl in os.listdir(flpath)]
 		imgs = sorted(imgs, key=lambda val: int(val.split('.')[0]))
+
+		mspath = '%s/%s.npy' % (masks_dir, fldr)
+		masks = np.load(mspath)
 
 		lblpath = '%s/%s' % (labels_dir, fldr)
 		mat = loadmat(lblpath)
@@ -116,6 +122,7 @@ def fetch_penn(seqlen, speedup):
 		assert len(vidobj.frames) == 0
 
 		for frame_ii in range(len(imgs)):
+			mask = masks[frame_ii]
 
 			if frame_ii <= len(bbox) - 1:
 				box = bbox[frame_ii]
@@ -136,6 +143,7 @@ def fetch_penn(seqlen, speedup):
 			vidobj.add_frame(
 				'%s/%s' % (flpath, imgs[frame_ii]),
 				box,
+				mask,
 				coords,
 				coco_coords)
 
@@ -216,13 +224,15 @@ def fetch_jhmdb(seqlen, speedup):
 	return videos
 
 class MultiVideoDataset:
-	def __init__(self, seqlen=4, speedup=2, shuffle=True, bins=7, plot_buckets=False, source='jhmdb'):
+	def __init__(self, seqlen=4, speedup=2, shuffle=True, bins=7, plot_buckets=False, source='penn'):
 		self.speedup = speedup
 
 		if source == 'jhmdb':
 			videos = fetch_jhmdb(seqlen, speedup)
-		else:
+		elif source == 'penn':
 			videos = fetch_penn(seqlen, speedup)
+		else:
+			raise Exception(' [!] FATAL: Unknown datasource')
 
 		assert len(videos) > 0
 
