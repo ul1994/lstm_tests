@@ -107,8 +107,8 @@ def fetch_penn(seqlen, speedup):
 		imgs = [fl for fl in os.listdir(flpath)]
 		imgs = sorted(imgs, key=lambda val: int(val.split('.')[0]))
 
-		mspath = '%s/%s.npy' % (masks_dir, fldr)
-		masks = np.load(mspath)
+		mspath = '%s/%s' % (masks_dir, fldr)
+		maskpaths = ['%s/%s' % (mspath, fl) for fl in os.listdir(mspath)]
 
 		lblpath = '%s/%s' % (labels_dir, fldr)
 		mat = loadmat(lblpath)
@@ -122,7 +122,7 @@ def fetch_penn(seqlen, speedup):
 		assert len(vidobj.frames) == 0
 
 		for frame_ii in range(len(imgs)):
-			mask = masks[frame_ii]
+			mask = maskpaths[frame_ii]
 
 			if frame_ii <= len(bbox) - 1:
 				box = bbox[frame_ii]

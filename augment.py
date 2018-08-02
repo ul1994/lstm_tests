@@ -239,8 +239,10 @@ def load_refs(batch_refs):
 
 	for refs in batch_refs:
 		zipped, augment = refs
-		frames, boxes, __masks, _, coco_coords = zip(*zipped)
+		frames, boxes, maskpaths, _, coco_coords = zip(*zipped)
 		imgs, heats, pafs, mask_heats, mask_pafs = [], [], [], [], []
+
+		__masks = np.array([np.load(fl) for fl in maskpaths])
 
 		imgs = [imread(path) for path in frames]
 		imsize = imgs[0].shape
@@ -253,10 +255,9 @@ def load_refs(batch_refs):
 				boxes[frame_ii],
 				imsize, augment)
 			assert len(coords) == len(coco_coords[frame_ii])
-			heats.append(create_heatmap(19, width, height, [coords], sigma=7.0, stride=8))
+			heat = create_heatmap(19, width, height, [coords], sigma=7.0, stride=8)
 			paf = create_paf(19, width, height, [coords], threshold=1.0, stride=8)
 			assert paf.shape[-1] == 38
-			pafs.append(paf)
 
 			heat_mask = create_mask(19, width, height, __masks[frame_ii])
 			mask_heats.append(heat_mask)
@@ -270,6 +271,12 @@ def load_refs(batch_refs):
 			for ind, (j_idx1, j_idx2) in enumerate(JointsLoader.joint_pairs):
 				if j_idx1 in PENN_MISSING or j_idx2 in PENN_MISSING:
 					paf_mask[:, :, ind] = 0
+
+			heat = np.multiply(heat, heat_mask.astype(np.float32))
+			paf = np.multiply(paf, paf_mask.astype(np.float32))
+
+			heats.append(heat)
+			pafs.append(paf)
 
 		mask_heats = shape_image(mask_heats, boxes, augment, stride=8)
 		mask_pafs = shape_image(mask_pafs, boxes, augment, stride=8)
