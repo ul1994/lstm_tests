@@ -16,9 +16,6 @@ DATA_DIR = "/beegfs/ua349/lstm/Penn_Action"
 frames_dir = DATA_DIR + '/frames'
 labels_dir = DATA_DIR + '/labels'
 
-# [nose, neck, Rsho, Relb, Rwri, Lsho, Lelb, Lwri, Rhip, Rkne, Rank, Lhip, Lkne, Lank, Leye, Reye, Lear, Rear, pt19]
-coco_incl = [0, None, 1, 3, 5, 2, 4, 6, 7, 9, 11, 8, 10, 12, None, None, None, None]
-
 def approx_neck(coords):
 	NOSE_IND = 0
 	NECK_IND = 1

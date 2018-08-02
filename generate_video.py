@@ -16,12 +16,12 @@ sys.path.append('../tf/ver1')
 from training.label_maps import create_heatmap, create_paf
 from training.dataflow import JointsLoader
 
+# [nose, neck, Rsho, Relb, Rwri, Lsho, Lelb, Lwri, Rhip, Rkne, Rank, Lhip, Lkne, Lank, Leye, Reye, Lear, Rear, pt19]
+penn2coco = [0, None, 1, 3, 5, 2, 4, 6, 7, 9, 11, 8, 10, 12, None, None, None, None]
+#                      0 1 2 3 4  5 6 7  8 9 10 11 12 13
+# order_to_pretrain = [2 1 3 7 11 4 8 12 5 9 13 6 10 14];
 
-PENN_DIR = "/beegfs/ua349/lstm/Penn_Action"
-
-frames_dir = PENN_DIR + '/frames'
-labels_dir = PENN_DIR + '/labels'
-
+jhmdb2coco = [2, None, 1, 7, 4, 3, 11, 8, 12, 9, 6, 5, 13, 10, None, None, None, None]
 class Video:
 
 	def __init__(self, seqlen, speedup=1):
@@ -87,59 +87,142 @@ class Video:
 
 		self.augment = (randZoom, randDeg, randX, randY, randFlip)
 
-class MultiVideoDataset:
-	def __init__(self, seqlen=4, speedup=2, shuffle=True, bins=7, plot_buckets=False):
-		refs = []
-		self.speedup = speedup
+def fetch_penn(seqlen, speedup):
+	PENN_DIR = "/beegfs/ua349/lstm/Penn_Action"
 
-		frame_folders = os.listdir(frames_dir)
-		videos = []
-		for __fii, fldr in enumerate(sorted(frame_folders, key=lambda val: int(val))):
+	frames_dir = PENN_DIR + '/frames'
+	labels_dir = PENN_DIR + '/labels'
 
-			sys.stdout.write('%d/%d\r' % (__fii, len(frame_folders)))
-			sys.stdout.flush()
+	frame_folders = os.listdir(frames_dir)
+	videos = []
+	for __fii, fldr in enumerate(sorted(frame_folders, key=lambda val: int(val))):
 
-			flpath = '%s/%s' % (frames_dir, fldr)
-			imgs = [fl for fl in os.listdir(flpath)]
-			imgs = sorted(imgs, key=lambda val: int(val.split('.')[0]))
+		sys.stdout.write('%d/%d\r' % (__fii, len(frame_folders)))
+		sys.stdout.flush()
 
-			lblpath = '%s/%s' % (labels_dir, fldr)
+		flpath = '%s/%s' % (frames_dir, fldr)
+		imgs = [fl for fl in os.listdir(flpath)]
+		imgs = sorted(imgs, key=lambda val: int(val.split('.')[0]))
+
+		lblpath = '%s/%s' % (labels_dir, fldr)
+		mat = loadmat(lblpath)
+		xs, ys, bbox = mat['x'], mat['y'], mat['bbox']
+		vis, dim = mat['visibility'], mat['dimensions']
+
+		vidobj = Video(speedup=speedup, seqlen=seqlen)
+		vidobj.source = 'penn'
+		videos.append(vidobj)
+
+		assert len(vidobj.frames) == 0
+
+		for frame_ii in range(len(imgs)):
+
+			if frame_ii <= len(bbox) - 1:
+				box = bbox[frame_ii]
+			else:
+				box = bbox[-1] # just sub in last frame
+			box = [val+1 for val in box]
+
+			coords = []
+			for (xx, yy) in zip(xs[frame_ii], ys[frame_ii]):
+				if xx - 1 <= 0 or yy - 1 <= 0:
+					coords.append(None)
+				else:
+					coords.append((xx-1, yy-1))
+
+			coco_coords = [None if ind is None else coords[ind] for ind in penn2coco]
+			approx_neck(coco_coords)
+
+			vidobj.add_frame(
+				'%s/%s' % (flpath, imgs[frame_ii]),
+				box,
+				coords,
+				coco_coords)
+
+		assert len(vidobj.frames) == len(imgs)
+		assert len(vidobj.boxes) == len(imgs)
+	return videos
+
+def just_files(ls):
+    return [fl for fl in ls if fl[0] is not '.']
+
+def fetch_jhmdb(seqlen, speedup):
+	JHMDB_PATH = '/beegfs/ua349/lstm/JHMDB'
+
+	imfolder = '%s/Rename_Images' % (JHMDB_PATH)
+	maskfolder = '%s/puppet_mask' % (JHMDB_PATH)
+	jointfolder = '%s/joint_positions' % (JHMDB_PATH)
+
+	frame_folders = os.listdir(imfolder)
+	videos = []
+
+	cats = os.listdir(imfolder)
+	for __catii, catfolder in enumerate(sorted(just_files(cats))):
+		sys.stdout.write('%d/%d\r' % (__catii+1, len(cats)))
+		sys.stdout.flush()
+
+		vidnames = os.listdir('%s/%s' % (imfolder, catfolder))
+		for __fii, fldr in enumerate(sorted(just_files(vidnames))):
+
+			flpath = '%s/%s/%s' % (imfolder, catfolder, fldr)
+			imgs = [fl for fl in just_files(os.listdir(flpath))]
+			imgs = sorted(imgs, key=lambda name: int(name.split('.')[0]))
+
+			maskpath = '%s/%s/%s/puppet_mask.mat' % (maskfolder, catfolder, fldr)
+			try:
+				maskmat = loadmat(maskpath)
+				masks = np.swapaxes(np.array(maskmat['part_mask']), 0, 2)
+			except:
+				print('No mask: %s' % maskpath)
+				continue
+				# raise Exception()
+
+			lblpath = '%s/%s/%s/joint_positions.mat' % (jointfolder, catfolder, fldr)
 			mat = loadmat(lblpath)
-			xs, ys, bbox = mat['x'], mat['y'], mat['bbox']
-			vis, dim = mat['visibility'], mat['dimensions']
+			joints = np.swapaxes(np.array(mat['pos_img']), 0, 2)
 
 			vidobj = Video(speedup=speedup, seqlen=seqlen)
-			vidobj.source = 'penn'
+			vidobj.source = 'jhmdb'
 			videos.append(vidobj)
 
-			assert len(vidobj.frames) == 0
+			# print(len(imgs), masks.shape)
+			imgs = imgs[:len(masks)] # some vids are incomplete
+			try:
+				assert len(vidobj.frames) == 0
+				assert len(imgs) == masks.shape[0]
+				assert len(imgs) == joints.shape[0]
+			except:
+				print(len(imgs), mat.keys())
+				print(masks.shape, joints.shape)
+				raise Exception()
 
 			for frame_ii in range(len(imgs)):
 
-				if frame_ii <= len(bbox) - 1:
-					box = bbox[frame_ii]
-				else:
-					box = bbox[-1] # just sub in last frame
-				box = [val+1 for val in box]
+				mask = masks[frame_ii]
+				coords = joints[frame_ii] # (15, 2)
+				# print(coords)
 
-				coords = []
-				for (xx, yy) in zip(xs[frame_ii], ys[frame_ii]):
-					if xx - 1 <= 0 or yy - 1 <= 0:
-						coords.append(None)
-					else:
-						coords.append((xx-1, yy-1))
-
-				coco_coords = [None if ind is None else coords[ind] for ind in coco_incl]
+				coco_coords = [None if ind is None else coords[ind] for ind in jhmdb2coco]
 				approx_neck(coco_coords)
 
 				vidobj.add_frame(
 					'%s/%s' % (flpath, imgs[frame_ii]),
-					box,
+					mask,
 					coords,
 					coco_coords)
 
 			assert len(vidobj.frames) == len(imgs)
 			assert len(vidobj.boxes) == len(imgs)
+	return videos
+
+class MultiVideoDataset:
+	def __init__(self, seqlen=4, speedup=2, shuffle=True, bins=7, plot_buckets=False, source='jhmdb'):
+		self.speedup = speedup
+
+		if source == 'jhmdb':
+			videos = fetch_jhmdb(seqlen, speedup)
+		else:
+			videos = fetch_penn(seqlen, speedup)
 
 		assert len(videos) > 0
 
@@ -153,9 +236,12 @@ class MultiVideoDataset:
 
 			import matplotlib.pyplot as plt
 
-			plt.figure(figsize=(14, 10))
-			plt.title('Bucket size: %d' % binsize)
-			plt.plot(dist)
+			plt.figure(figsize=(14, 6))
+			plt.title('Bucket size: %d  Videos: %d' % (binsize, len(vidlens)))
+			plt.scatter(
+				[ii for ii in range(len(dist)) if dist[ii] > 0],
+				[val for val in dist if val > 0])
+
 			agg = 0
 			for ii, unit in enumerate(dist):
 				agg += unit
@@ -164,6 +250,7 @@ class MultiVideoDataset:
 					plt.plot([ii, ii], [0, 50], color='red')
 
 			plt.show()
+			plt.close()
 
 		buckets = []
 		videos = sorted(videos, key=lambda obj: len(obj.frames))
