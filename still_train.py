@@ -193,16 +193,16 @@ def load_any_weights(model, multigpu=True):
 				loaded += 1
 			except:
 				failed += 1
-				# print(layer.get_weights()[0].shape, wmat.shape)
+				print(layer.get_weights()[0].shape, wmat.shape)
 				badlist.append((type(layer), layer.name))
 		# else:
 		# 	failed += 1
 		# 	badlist.append((type(layer), layer.name))
 	print('Loaded %d layers (mismatch: %d)' % (loaded, failed))
-	assert loaded > 0
 
 	for name in badlist:
 		print('-', name)
+	assert loaded > 0
 	# exit(1)
 
 if __name__ == '__main__':

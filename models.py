@@ -334,7 +334,7 @@ def apply_mask_full(x, mask1, mask2, num_p, stage, branch):
         w = Multiply(name=w_name)([x, mask2])  # vec_heat
     return w
 
-def mod_v3(bsize=6, time_steps=4, imsize=368, outsize=46, weight_decay=5e-4, trainable=True):
+def mod_v3(trainable=True, bsize=6, time_steps=4, imsize=368, outsize=46, weight_decay=5e-4):
 
 	stages = 6
 	np_branch1 = 38
@@ -347,13 +347,15 @@ def mod_v3(bsize=6, time_steps=4, imsize=368, outsize=46, weight_decay=5e-4, tra
 	inputs = []
 	outputs = []
 
-	img_input = Input(shape=img_input_shape[1:], batch_shape=img_input_shape)
-	vec_mask = Input(shape=vec_input_shape[1:], batch_shape=vec_input_shape)
-	heat_mask = Input(shape=heat_input_shape[1:], batch_shape=heat_input_shape)
-
+	# img_input = Input(shape=img_input_shape[1:], batch_shape=img_input_shape)
+	img_input = Input(batch_shape=img_input_shape)
 	inputs.append(img_input)
-	inputs.append(vec_mask)
-	inputs.append(heat_mask)
+	if trainable:
+		vec_mask = Input(shape=vec_input_shape[1:], batch_shape=vec_input_shape)
+		heat_mask = Input(shape=heat_input_shape[1:], batch_shape=heat_input_shape)
+		inputs.append(vec_mask)
+		inputs.append(heat_mask)
+
 
 	img_normalized = Lambda(lambda x: x / 256 - 0.5)
 	normed = TimeDistributed(img_normalized)(img_input)
@@ -363,77 +365,154 @@ def mod_v3(bsize=6, time_steps=4, imsize=368, outsize=46, weight_decay=5e-4, tra
 
 	# stage 1 - branch 1 (PAF)
 	stage1_branch1_out = stage1_block(stage0_out, np_branch1, 1, weight_decay, rnn=True)
-	w1 = apply_mask_full(stage1_branch1_out, vec_mask, heat_mask, np_branch1, 1, 1)
-
-	# stage 1 - branch 2 (confidence maps)
 	stage1_branch2_out = stage1_block(stage0_out, np_branch2, 2, weight_decay, rnn=True)
-	w2 = apply_mask_full(stage1_branch2_out, vec_mask, heat_mask, np_branch2, 1, 2)
+
+	if trainable:
+		w1 = apply_mask_full(stage1_branch1_out, vec_mask, heat_mask, np_branch1, 1, 1)
+		w2 = apply_mask_full(stage1_branch2_out, vec_mask, heat_mask, np_branch2, 1, 2)
+		outputs.append(w1)
+		outputs.append(w2)
 
 	x = Concatenate()([stage1_branch1_out, stage1_branch2_out, stage0_out])
 
-	outputs.append(w1)
-	outputs.append(w2)
 
 	# stage sn >= 2
 	get_last = Lambda(lambda tensor: tensor[:, time_steps-1, :, :, :])
 	for sn in range(2, stages + 1):
 		if sn == 2:
-			# stage SN - branch 1 (PAF)
 			stageT_branch1_out = stageT_block(x, np_branch1, sn, 1, weight_decay, rnn=True)
-			w1 = apply_mask_full(stageT_branch1_out, vec_mask, heat_mask, np_branch1, sn, 1)
-
-			# stage SN - branch 2 (confidence maps)
 			stageT_branch2_out = stageT_block(x, np_branch2, sn, 2, weight_decay, rnn=True)
-			w2 = apply_mask_full(stageT_branch2_out, vec_mask, heat_mask, np_branch2, sn, 2)
-
-			outputs.append(w1)
-			outputs.append(w2)
+			if trainable:
+				w2 = apply_mask_full(stageT_branch2_out, vec_mask, heat_mask, np_branch2, sn, 2)
+				w1 = apply_mask_full(stageT_branch1_out, vec_mask, heat_mask, np_branch1, sn, 1)
+				outputs.append(w1)
+				outputs.append(w2)
 			x = Concatenate()([stageT_branch1_out, stageT_branch2_out, stage0_out])
 
 		elif sn == 3:
-			# stage SN - branch 1 (PAF)
 			stageT_branch1_out = stageJoin_block_lstm(x, np_branch1, sn, 1, weight_decay, stateful=True)
-			w1 = apply_mask_full(stageT_branch1_out, get_last(vec_mask), get_last(heat_mask), np_branch1, sn, 1)
-
-			# stage SN - branch 2 (confidence maps)
 			stageT_branch2_out = stageJoin_block_lstm(x, np_branch2, sn, 2, weight_decay, stateful=True)
-			w2 = apply_mask_full(stageT_branch2_out, get_last(vec_mask), get_last(heat_mask), np_branch2, sn, 2)
-
-			outputs.append(w1)
-			outputs.append(w2)
+			if trainable:
+				w1 = apply_mask_full(stageT_branch1_out, get_last(vec_mask), get_last(heat_mask), np_branch1, sn, 1)
+				w2 = apply_mask_full(stageT_branch2_out, get_last(vec_mask), get_last(heat_mask), np_branch2, sn, 2)
+				outputs.append(w1)
+				outputs.append(w2)
 			x = Concatenate()([stageT_branch1_out, stageT_branch2_out, get_last(stage0_out)])
 
 		elif sn > 3:
-			# stage SN - branch 1 (PAF)
 			stageT_branch1_out = stageT_block(x, np_branch1, sn, 1, weight_decay, rnn=False)
-			w1 = apply_mask_full(stageT_branch1_out, get_last(vec_mask), get_last(heat_mask), np_branch1, sn, 1)
-
-			# stage SN - branch 2 (confidence maps)
 			stageT_branch2_out = stageT_block(x, np_branch2, sn, 2, weight_decay, rnn=False)
-			w2 = apply_mask_full(stageT_branch2_out, get_last(vec_mask), get_last(heat_mask), np_branch2, sn, 2)
+			if trainable:
+				w1 = apply_mask_full(stageT_branch1_out, get_last(vec_mask), get_last(heat_mask), np_branch1, sn, 1)
+				w2 = apply_mask_full(stageT_branch2_out, get_last(vec_mask), get_last(heat_mask), np_branch2, sn, 2)
+				outputs.append(w1)
+				outputs.append(w2)
+
 			if sn != stages:
 				x = Concatenate()([stageT_branch1_out, stageT_branch2_out, get_last(stage0_out)])
+			else:
+				if not trainable:
+					outputs.append(stageT_branch1_out)
+					outputs.append(stageT_branch2_out)
 
-			outputs.append(w1)
-			outputs.append(w2)
+	model = Model(inputs=inputs, outputs=outputs)
 
-		# stage SN - branch 1 (PAF)
-		# stageT_branch1_out = stageT_block(x, np_branch1, sn, 1, weight_decay, rnn=True)
-		# w1 = apply_mask_full(stageT_branch1_out, get_last(vec_mask), get_last(heat_mask), np_branch1, sn, 1)
+	return model
 
-		# # stage SN - branch 2 (confidence maps)
-		# stageT_branch2_out = stageT_block(x, np_branch2, sn, 2, weight_decay, rnn=True)
-		# w2 = apply_mask_full(stageT_branch2_out, get_last(vec_mask), get_last(heat_mask), np_branch2, sn, 2)
-		# if sn != stages:
-		# 	x = Concatenate()([stageT_branch1_out, stageT_branch2_out, stage0_out])
+def mod_v4(trainable=True, bsize=6, time_steps=4, imsize=368, outsize=46, weight_decay=5e-4):
+	get_last = Lambda(lambda tensor: tensor[:, time_steps-1, :, :, :])
 
-		# outputs.append(w1)
-		# outputs.append(w2)
+	stages = 6
+	np_branch1 = 38
+	np_branch2 = 19
+
+	img_input_shape = (bsize, time_steps, imsize, imsize, 3)
+	vec_input_shape = (bsize, time_steps, outsize, outsize, 38)
+	heat_input_shape = (bsize, time_steps, outsize, outsize, 19)
+
+	inputs = []
+	outputs = []
+
+	# img_input = Input(shape=img_input_shape[1:], batch_shape=img_input_shape)
+	img_input = Input(batch_shape=img_input_shape)
+	inputs.append(img_input)
+	if trainable:
+		vec_mask = Input(shape=vec_input_shape[1:], batch_shape=vec_input_shape)
+		heat_mask = Input(shape=heat_input_shape[1:], batch_shape=heat_input_shape)
+		inputs.append(vec_mask)
+		inputs.append(heat_mask)
+
+
+	img_normalized = Lambda(lambda x: x / 256 - 0.5)
+	normed = TimeDistributed(img_normalized)(img_input)
+
+	# VGG
+	stage0_out = vgg_block(normed, weight_decay, rnn=True)
+
+	# stage 1 - branch 1 (PAF)
+	stage1_branch1_out = stage1_block(stage0_out, np_branch1, 1, weight_decay, rnn=True)
+	stage1_branch2_out = stage1_block(stage0_out, np_branch2, 2, weight_decay, rnn=True)
+
+	if trainable:
+		w1 = apply_mask_full(get_last(stage1_branch1_out), get_last(vec_mask), get_last(heat_mask), np_branch1, 1, 1)
+		w2 = apply_mask_full(get_last(stage1_branch2_out), get_last(vec_mask), get_last(heat_mask), np_branch2, 1, 2)
+		outputs.append(w1)
+		outputs.append(w2)
+
+	x = Concatenate()([stage1_branch1_out, stage1_branch2_out, stage0_out])
+
+
+	# stage sn >= 2
+	for sn in range(2, stages + 1):
+		if sn == 2:
+			stageT_branch1_out = stageT_block(x, np_branch1, sn, 1, weight_decay, rnn=True)
+			stageT_branch2_out = stageT_block(x, np_branch2, sn, 2, weight_decay, rnn=True)
+			if trainable:
+				w2 = apply_mask_full(get_last(stageT_branch2_out), get_last(vec_mask), get_last(heat_mask), np_branch2, sn, 2)
+				w1 = apply_mask_full(get_last(stageT_branch1_out), get_last(vec_mask), get_last(heat_mask), np_branch1, sn, 1)
+				outputs.append(w1)
+				outputs.append(w2)
+			x = Concatenate()([stageT_branch1_out, stageT_branch2_out, stage0_out])
+
+		elif sn == 3:
+			stageT_branch1_out = stageJoin_block_lstm(x, np_branch1, sn, 1, weight_decay, stateful=True)
+			stageT_branch2_out = stageJoin_block_lstm(x, np_branch2, sn, 2, weight_decay, stateful=True)
+			if trainable:
+				w1 = apply_mask_full(stageT_branch1_out, get_last(vec_mask), get_last(heat_mask), np_branch1, sn, 1)
+				w2 = apply_mask_full(stageT_branch2_out, get_last(vec_mask), get_last(heat_mask), np_branch2, sn, 2)
+				outputs.append(w1)
+				outputs.append(w2)
+			x = Concatenate()([stageT_branch1_out, stageT_branch2_out, get_last(stage0_out)])
+
+		elif sn > 3:
+			stageT_branch1_out = stageT_block(x, np_branch1, sn, 1, weight_decay, rnn=False)
+			stageT_branch2_out = stageT_block(x, np_branch2, sn, 2, weight_decay, rnn=False)
+			if trainable:
+				w1 = apply_mask_full(stageT_branch1_out, get_last(vec_mask), get_last(heat_mask), np_branch1, sn, 1)
+				w2 = apply_mask_full(stageT_branch2_out, get_last(vec_mask), get_last(heat_mask), np_branch2, sn, 2)
+				outputs.append(w1)
+				outputs.append(w2)
+
+			if sn != stages:
+				x = Concatenate()([stageT_branch1_out, stageT_branch2_out, get_last(stage0_out)])
+			else:
+				if not trainable:
+					outputs.append(stageT_branch1_out)
+					outputs.append(stageT_branch2_out)
 
 	model = Model(inputs=inputs, outputs=outputs)
 
 	return model
 
 MODELS = {
-	'mod_v3': mod_v3
+	'mod_v3': mod_v3,
+	'mod_v4': mod_v4,
 }
+
+if __name__ == '__main__':
+	import os, sys
+	os.environ["CUDA_VISIBLE_DEVICES"]= "1"
+
+	mdl = MODELS['mod_v4'](bsize=1, time_steps=4)
+	mdl.summary()
+

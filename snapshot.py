@@ -63,7 +63,17 @@ class Snapshot(keras.callbacks.Callback):
 			for tii in range(SEQLEN):
 				plt.subplot(3, SEQLEN, SEQLEN+tii+1)
 				plt.axis('off')
-				if outform == 'last':
+				if outform == 'join':
+					if tii == SEQLEN-1: # last
+						# get the actual last heat out ~ network output
+						LAST_LAYER = -1
+						heat = results[LAST_LAYER][FIRST_BATCH]
+					else:
+						# get intermediate sequential outs from middle layers
+						SECOND_LAYER = 1
+						STACK_PATTERN = 2
+						heat = results[SECOND_LAYER * STACK_PATTERN + 1][FIRST_BATCH][tii]
+				elif outform == 'last':
 					if tii == SEQLEN-1: # last
 						# get the actual last heat out ~ network output
 						LAST_LAYER = -1
@@ -78,7 +88,7 @@ class Snapshot(keras.callbacks.Callback):
 			for tii in range(SEQLEN):
 				plt.subplot(3, SEQLEN, 2*SEQLEN+tii+1)
 				plt.axis('off')
-				if outform == 'last':
+				if outform == 'join':
 					if tii == SEQLEN-1: # last
 						# get the actual last heat out ~ network output
 						LAST_LAYER = -2

@@ -34,6 +34,7 @@ DATA_DIR = '/beegfs/ua349/lstm/coco'
 
 # if this is true, acknowledge it (set to False) and reset lstm layers
 RESET_FLAG = False
+SKIP_FLAG = False
 
 class ManualLSTMReset(keras.callbacks.Callback):
 	def __init__(self):
@@ -48,21 +49,58 @@ class ManualLSTMReset(keras.callbacks.Callback):
 			self.model.reset_states()
 			RESET_FLAG = False
 
-def stack_outputs(pafs, heats, size=6, collapse=2):
-	return [
-		pafs, heats,
-		pafs, heats,
-		pafs[:, -1], heats[:, -1], # these
+class LossAbort(keras.callbacks.Callback):
+	# because we train long sequences of images (videos),
+	#   a bad video can completely throw off the model
+	# If loss inflates drastically, skip video
+	prevLoss = None
+	def on_batch_end(self, batch, logs=None):
+		global SKIP_FLAG
 
-		pafs[:, -1], heats[:, -1],
-		pafs[:, -1], heats[:, -1],
-		pafs[:, -1], heats[:, -1],
-	]
+		loss = logs['loss']
 
-def mix_gen(df, dset, batch_size, format='last', every=2):
+		if self.prevLoss is not None and loss > self.prevLoss * 1.5:
+			SKIP_FLAG = True
+			print()
+			print(' [*] WARN: Loss jumped from %.1f -> %.1f. Skipping batch...' % (self.prevLoss, loss))
+
+		self.prevLoss = loss
+
+def stack_video_outputs(pafs, heats, format, size=6, collapse=2):
+	if format == 'join':
+		# reduction to last timestep
+		return [
+			pafs, heats,
+			pafs, heats,
+			pafs[:, -1], heats[:, -1],
+
+			pafs[:, -1], heats[:, -1],
+			pafs[:, -1], heats[:, -1],
+			pafs[:, -1], heats[:, -1],
+		]
+	elif format == 'last':
+		# only matching the final timestep outputs
+		return [
+			pafs[:, -1], heats[:, -1],
+			pafs[:, -1], heats[:, -1],
+			pafs[:, -1], heats[:, -1],
+
+			pafs[:, -1], heats[:, -1],
+			pafs[:, -1], heats[:, -1],
+			pafs[:, -1], heats[:, -1],
+		]
+	else:
+		raise Exception('FATAL: Unknown format: %s' % format)
+
+def mix_gen(df, dset, batch_size, outformat='join', every=2):
 	global RESET_FLAG
+	global SKIP_FLAG
 
 	while True:
+		if SKIP_FLAG:
+			SKIP_FLAG = False # ack
+			dset.clear()
+
 		inp, out, video_ended = dset.next_batch(bsize=batch_size)
 
 		if video_ended:
@@ -73,7 +111,7 @@ def mix_gen(df, dset, batch_size, format='last', every=2):
 
 		RESET_FLAG = video_ended
 
-		out = stack_outputs(out[0], out[1])
+		out = stack_video_outputs(out[0], out[1], outformat)
 
 		yield inp, out
 
@@ -90,9 +128,13 @@ if __name__ == '__main__':
 	parser.add_argument('--time_steps', default=4, type=int)
 
 	parser.add_argument('--gpus', default=1, type=int)
+	parser.add_argument('--gpu', default=None, type=int)
 	parser.add_argument('--batch', default=6, type=int)
 	parser.add_argument('--count', default=False, type=bool)
 	args = parser.parse_args()
+
+	if args.gpu is not None:
+		os.environ["CUDA_VISIBLE_DEVICES"]= "%d" % int(args.gpu)
 
 	__format = args.format.split('|')
 	batch_size = args.batch * args.gpus
@@ -125,17 +167,18 @@ if __name__ == '__main__':
 	load_any_weights(model, multigpu=args.gpus > 1)
 
 
-	df = get_dataflow(
-		annot_path='%s/annotations/person_keypoints_%s2017.json' % (DATA_DIR, args.dataset),
-		img_dir='%s/%s2017/' % (DATA_DIR, args.dataset))
-	train_samples = df.size()
-	print('Collected %d val samples...' % train_samples)
-	train_df = batch_dataflow(df, batch_size, time_steps=args.time_steps, format=__format)
+	# df = get_dataflow(
+	# 	annot_path='%s/annotations/person_keypoints_%s2017.json' % (DATA_DIR, args.dataset),
+	# 	img_dir='%s/%s2017/' % (DATA_DIR, args.dataset))
+	# train_samples = df.size()
+	# print('Collected %d val samples...' % train_samples)
+	# train_df = batch_dataflow(df, batch_size, time_steps=args.time_steps, format=__format)
+	train_df = None
 
 	dset = MultiVideoDataset(shuffle=True, bins=7, seqlen=args.time_steps, speedup=args.speedup)
-	train_gen = mix_gen(train_df, dset, batch_size)
+	train_gen = mix_gen(train_df, dset, batch_size, outformat=__format[1])
 
-	cblist = [lrate, Snapshot(args.name, train_gen, __format), ManualLSTMReset()]
+	cblist = [lrate, Snapshot(args.name, train_gen, __format), ManualLSTMReset(), LossAbort()]
 	# cblist = [lrate, ManualLSTMReset()]
 
 	tf.logging.set_verbosity(tf.logging.ERROR)
