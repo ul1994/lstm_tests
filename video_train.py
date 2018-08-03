@@ -122,6 +122,7 @@ if __name__ == '__main__':
 	parser.add_argument('--dataset', default='train', type=str)
 	parser.add_argument('--format', default='sequence', required=True, type=str)
 
+	parser.add_argument('--playlim', default=None, type=int)
 	parser.add_argument('--speedup', default=1, type=int)
 	parser.add_argument('--epochs', default=5, type=int)
 	parser.add_argument('--iters', default=100 * 1000, type=int)
@@ -175,7 +176,7 @@ if __name__ == '__main__':
 	# train_df = batch_dataflow(df, batch_size, time_steps=args.time_steps, format=__format)
 	train_df = None
 
-	dset = MultiVideoDataset(shuffle=True, bins=7, seqlen=args.time_steps, speedup=args.speedup)
+	dset = MultiVideoDataset(shuffle=True, bins=7, seqlen=args.time_steps, speedup=args.speedup, limit_playback=args.playlim)
 	train_gen = mix_gen(train_df, dset, batch_size, outformat=__format[1])
 
 	cblist = [lrate, Snapshot(args.name, train_gen, __format), ManualLSTMReset(), LossAbort()]

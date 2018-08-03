@@ -26,6 +26,7 @@ class Video:
 
 	def __init__(self, seqlen, speedup=1):
 		self.index = 0
+		self.limit = None
 
 		self.source = None
 
@@ -48,7 +49,11 @@ class Video:
 		self.coco_coords.append(coco_coords)
 
 	def ended(self):
-		return self.index + self.seqlen * self.speedup >= len(self.zipped)
+		endindex = len(self.zipped)
+		if self.limit is not None:
+			endindex = self.limit
+
+		return self.index + self.seqlen * self.speedup >= endindex
 
 	def next_segment(self):
 		assert self.augment is not None
@@ -224,8 +229,19 @@ def fetch_jhmdb(seqlen, speedup):
 	return videos
 
 class MultiVideoDataset:
-	def __init__(self, seqlen=4, speedup=2, shuffle=True, bins=7, plot_buckets=False, source='penn'):
+	def __init__(self,
+					seqlen=4,
+					limit_playback=None,
+					speedup=2,
+					shuffle=True,
+					bins=7,
+					plot_buckets=False,
+					source='penn',
+					vary_playback=2):
+
 		self.speedup = speedup
+		self.limit_playback = limit_playback
+		self.vary_playback = vary_playback
 
 		if source == 'jhmdb':
 			videos = fetch_jhmdb(seqlen, speedup)
@@ -325,19 +341,28 @@ class MultiVideoDataset:
 
 		vid_ended = any([vid.ended() for vid in self.streams]) or len(self.streams) == 0
 		if vid_ended:
-			# TODO: collect the videos that are done to used buckets
-			# if videos are done or stream is empty, get a new set of videos
-			bind = randint(0, len(self.buckets)-1)
-			videos = self.sample_bucket(bind, bsize)
-
-			# this will reset the frame index and also augmentation
-			for vid in videos: vid.reset()
-
 			# clear the stream - save consumed videos
 			for vid in self.streams:
 				self.used[vid.bucketid].append(vid)
 
+			# get a new set of videos
+			bind = randint(0, len(self.buckets)-1)
+			videos = self.sample_bucket(bind, bsize)
+
 			# activate fetched videos
+			# this will reset the frame index and also augmentation
+			# TODO: jitter start time
+			# TODO: Limit play time
+			for vid in videos: vid.reset()
+			if self.limit_playback is not None:
+				for vid in videos:
+					limitlen = self.limit_playback * self.speedup + randint(0, self.vary_playback)
+					vidlen = len(vid.frames)
+					vidend = vidlen - limitlen
+					randstart = randint(0, vidend - 1)
+					vid.index = int(randstart)
+					vid.limit = int(randstart + limitlen)
+
 			self.streams = videos
 
 			if self.first_batch:
