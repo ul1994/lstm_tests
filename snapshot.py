@@ -19,8 +19,8 @@ class Snapshot(keras.callbacks.Callback):
 
 		results = self.model.predict(ins)
 
-		if stills:
-			NSHOW = 5
+		if stills or outform == 'last':
+			NSHOW = len(ins[0]) # batch size
 			plt.figure(figsize=(14, 10))
 			for ii in range(NSHOW):
 				plt.subplot(3, NSHOW, ii+1)
@@ -29,11 +29,17 @@ class Snapshot(keras.callbacks.Callback):
 				img = ins[0][ii][-1] # ii-th batch, last img in sequence
 				img = cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_BGR2RGB)
 				plt.imshow(img.astype(np.float32)/256)
+
+				mask = ins[2][ii][-1][:, :, -1] # paf mask of iith batch (applies to all)
+				mask = cv2.resize(mask, (0,0), fx=8, fy=8)
+				plt.imshow(mask, alpha=0.5)
+
 			for ii in range(NSHOW):
 				plt.subplot(3, NSHOW, NSHOW+ii+1)
 				plt.axis('off')
 				if outform == 'last':
-					heat = results[-1][ii]
+					LAST_HEAT = -1
+					heat = results[LAST_HEAT][ii] # (46, 46, 19)
 				else:
 					raise Exception('Not supported')
 				plt.imshow(np.sum(heat[:, :, :-1].astype(np.float32), axis=-1))
@@ -41,10 +47,11 @@ class Snapshot(keras.callbacks.Callback):
 				plt.subplot(3, NSHOW, NSHOW*2+ii+1)
 				plt.axis('off')
 				if outform == 'last':
-					target = outs[-1][ii]
+					LAST_PAF = -2
+					paf = results[LAST_PAF][ii] # (46, 46, X)
 				else:
 					raise Exception('Not supported')
-				plt.imshow(np.sum(target[:, :, :-1].astype(np.float32), axis=-1))
+				plt.imshow(np.sum(paf.astype(np.float32), axis=-1))
 		else:
 			FIRST_BATCH = 0
 			SEQLEN = len(ins[0][0])
@@ -79,10 +86,7 @@ class Snapshot(keras.callbacks.Callback):
 						LAST_LAYER = -1
 						heat = results[LAST_LAYER][FIRST_BATCH]
 					else:
-						# get intermediate sequential outs from middle layers
-						SECOND_LAYER = 1
-						STACK_PATTERN = 2
-						heat = results[SECOND_LAYER * STACK_PATTERN + 1][FIRST_BATCH][tii]
+						continue
 				else: raise Exception('Not supported')
 				plt.imshow(np.sum(heat[:, :, :-1].astype(np.float32), axis=-1))
 			for tii in range(SEQLEN):
@@ -98,23 +102,15 @@ class Snapshot(keras.callbacks.Callback):
 						SECOND_LAYER = 1
 						STACK_PATTERN = 2
 						limbs = results[SECOND_LAYER * STACK_PATTERN][FIRST_BATCH][tii]
+				elif outform == 'last':
+					if tii == SEQLEN-1: # last
+						# get the actual last heat out ~ network output
+						LAST_LAYER = -2
+						limbs = results[LAST_LAYER][FIRST_BATCH]
+					else:
+						continue
 				else: raise Exception('Not supported')
 				plt.imshow(np.sum(limbs.astype(np.float32), axis=-1))
-			# for tii in range(SEQLEN):
-			# 	plt.subplot(3, SEQLEN, SEQLEN*2+tii+1)
-			# 	plt.axis('off')
-			# 	if outform == 'last':
-			# 		if tii == SEQLEN-1: # last
-			# 			# get the actual last heat out ~ network output
-			# 			LAST_LAYER = -1
-			# 			target = results[LAST_LAYER][FIRST_BATCH]
-			# 		else:
-			# 			# get intermediate sequential outs from middle layers
-			# 			SECOND_LAYER = 1
-			# 			STACK_PATTERN = 2
-			# 			target = results[SECOND_LAYER * STACK_PATTERN + 1][FIRST_BATCH][tii]
-			# 	else: raise Exception('Not supported')
-			# 	plt.imshow(np.sum(target[:, :, :-1].astype(np.float32), axis=-1))
 
 		plt.savefig('previews/%s' % save_name, bbox_inches='tight')
 		plt.close()

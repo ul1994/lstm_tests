@@ -419,21 +419,20 @@ def mod_v3(trainable=True, bsize=6, time_steps=4, imsize=368, outsize=46, weight
 
 	return model
 
-def mod_v4(trainable=True, bsize=6, time_steps=4, imsize=368, outsize=46, weight_decay=5e-4):
-	get_last = Lambda(lambda tensor: tensor[:, time_steps-1, :, :, :])
+def mod_v4(trainable=True, bsize=6, time_steps=None, imsize=368, outsize=46, weight_decay=5e-4):
+	STATEFUL_TIMESTEP = 1
 
 	stages = 6
 	np_branch1 = 38
 	np_branch2 = 19
 
-	img_input_shape = (bsize, time_steps, imsize, imsize, 3)
-	vec_input_shape = (bsize, time_steps, outsize, outsize, 38)
-	heat_input_shape = (bsize, time_steps, outsize, outsize, 19)
+	img_input_shape = (bsize, STATEFUL_TIMESTEP, imsize, imsize, 3)
+	vec_input_shape = (bsize, STATEFUL_TIMESTEP, outsize, outsize, 38)
+	heat_input_shape = (bsize, STATEFUL_TIMESTEP, outsize, outsize, 19)
 
 	inputs = []
 	outputs = []
 
-	# img_input = Input(shape=img_input_shape[1:], batch_shape=img_input_shape)
 	img_input = Input(batch_shape=img_input_shape)
 	inputs.append(img_input)
 	if trainable:
@@ -453,48 +452,37 @@ def mod_v4(trainable=True, bsize=6, time_steps=4, imsize=368, outsize=46, weight
 	stage1_branch1_out = stage1_block(stage0_out, np_branch1, 1, weight_decay, rnn=True)
 	stage1_branch2_out = stage1_block(stage0_out, np_branch2, 2, weight_decay, rnn=True)
 
+	flat = Lambda(lambda tensor: tensor[:, 0, :, :, :])
 	if trainable:
-		w1 = apply_mask_full(get_last(stage1_branch1_out), get_last(vec_mask), get_last(heat_mask), np_branch1, 1, 1)
-		w2 = apply_mask_full(get_last(stage1_branch2_out), get_last(vec_mask), get_last(heat_mask), np_branch2, 1, 2)
+		w1 = apply_mask_full(flat(stage1_branch1_out), flat(vec_mask), flat(heat_mask), np_branch1, 1, 1)
+		w2 = apply_mask_full(flat(stage1_branch2_out), flat(vec_mask), flat(heat_mask), np_branch2, 1, 2)
 		outputs.append(w1)
 		outputs.append(w2)
-
 	x = Concatenate()([stage1_branch1_out, stage1_branch2_out, stage0_out])
-
 
 	# stage sn >= 2
 	for sn in range(2, stages + 1):
 		if sn == 2:
-			stageT_branch1_out = stageT_block(x, np_branch1, sn, 1, weight_decay, rnn=True)
-			stageT_branch2_out = stageT_block(x, np_branch2, sn, 2, weight_decay, rnn=True)
-			if trainable:
-				w2 = apply_mask_full(get_last(stageT_branch2_out), get_last(vec_mask), get_last(heat_mask), np_branch2, sn, 2)
-				w1 = apply_mask_full(get_last(stageT_branch1_out), get_last(vec_mask), get_last(heat_mask), np_branch1, sn, 1)
-				outputs.append(w1)
-				outputs.append(w2)
-			x = Concatenate()([stageT_branch1_out, stageT_branch2_out, stage0_out])
-
-		elif sn == 3:
 			stageT_branch1_out = stageJoin_block_lstm(x, np_branch1, sn, 1, weight_decay, stateful=True)
 			stageT_branch2_out = stageJoin_block_lstm(x, np_branch2, sn, 2, weight_decay, stateful=True)
 			if trainable:
-				w1 = apply_mask_full(stageT_branch1_out, get_last(vec_mask), get_last(heat_mask), np_branch1, sn, 1)
-				w2 = apply_mask_full(stageT_branch2_out, get_last(vec_mask), get_last(heat_mask), np_branch2, sn, 2)
+				w1 = apply_mask_full(stageT_branch1_out, flat(vec_mask), flat(heat_mask), np_branch1, sn, 1)
+				w2 = apply_mask_full(stageT_branch2_out, flat(vec_mask), flat(heat_mask), np_branch2, sn, 2)
 				outputs.append(w1)
 				outputs.append(w2)
-			x = Concatenate()([stageT_branch1_out, stageT_branch2_out, get_last(stage0_out)])
+			x = Concatenate()([stageT_branch1_out, stageT_branch2_out, flat(stage0_out)])
 
-		elif sn > 3:
+		if sn > 2:
 			stageT_branch1_out = stageT_block(x, np_branch1, sn, 1, weight_decay, rnn=False)
 			stageT_branch2_out = stageT_block(x, np_branch2, sn, 2, weight_decay, rnn=False)
 			if trainable:
-				w1 = apply_mask_full(stageT_branch1_out, get_last(vec_mask), get_last(heat_mask), np_branch1, sn, 1)
-				w2 = apply_mask_full(stageT_branch2_out, get_last(vec_mask), get_last(heat_mask), np_branch2, sn, 2)
+				w1 = apply_mask_full(stageT_branch1_out, flat(vec_mask), flat(heat_mask), np_branch1, sn, 1)
+				w2 = apply_mask_full(stageT_branch2_out, flat(vec_mask), flat(heat_mask), np_branch2, sn, 2)
 				outputs.append(w1)
 				outputs.append(w2)
 
 			if sn != stages:
-				x = Concatenate()([stageT_branch1_out, stageT_branch2_out, get_last(stage0_out)])
+				x = Concatenate()([stageT_branch1_out, stageT_branch2_out, flat(stage0_out)])
 			else:
 				if not trainable:
 					outputs.append(stageT_branch1_out)
