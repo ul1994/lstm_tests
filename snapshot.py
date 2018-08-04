@@ -1,8 +1,13 @@
+
+import os, sys
 import numpy as np
 import keras
 import matplotlib.pyplot as plt
 import keras.backend as K
 import cv2
+
+sys.path.append('../tf/ver1')
+from demo_image import find_peaks, inference, colors, resize, skeleton
 
 class Snapshot(keras.callbacks.Callback):
 	batch = None
@@ -19,11 +24,14 @@ class Snapshot(keras.callbacks.Callback):
 
 		results = self.model.predict(ins)
 
+		figunit = 14/5
+		figheight = 10/3
 		if stills or outform == 'last':
 			NSHOW = len(ins[0]) # batch size
-			plt.figure(figsize=(14, 10))
+			figsize = (int(figunit * NSHOW), int(figheight * 4))
+			plt.figure(figsize=figsize)
 			for ii in range(NSHOW):
-				plt.subplot(3, NSHOW, ii+1)
+				plt.subplot(4, NSHOW, ii+1)
 				if ii == 0: plt.gca().set_title('Epoch: %d   Batch: %d' % (self.ecount, self.bcount))
 				plt.axis('off')
 				img = ins[0][ii][-1] # ii-th batch, last img in sequence
@@ -35,7 +43,7 @@ class Snapshot(keras.callbacks.Callback):
 				plt.imshow(mask, alpha=0.5)
 
 			for ii in range(NSHOW):
-				plt.subplot(3, NSHOW, NSHOW+ii+1)
+				plt.subplot(4, NSHOW, NSHOW+ii+1)
 				plt.axis('off')
 				if outform == 'last':
 					LAST_HEAT = -1
@@ -44,7 +52,7 @@ class Snapshot(keras.callbacks.Callback):
 					raise Exception('Not supported')
 				plt.imshow(np.sum(heat[:, :, :-1].astype(np.float32), axis=-1))
 			for ii in range(NSHOW):
-				plt.subplot(3, NSHOW, NSHOW*2+ii+1)
+				plt.subplot(4, NSHOW, NSHOW*2+ii+1)
 				plt.axis('off')
 				if outform == 'last':
 					LAST_PAF = -2
@@ -52,6 +60,24 @@ class Snapshot(keras.callbacks.Callback):
 				else:
 					raise Exception('Not supported')
 				plt.imshow(np.sum(paf.astype(np.float32), axis=-1))
+			for ii in range(NSHOW):
+				plt.subplot(4, NSHOW, NSHOW*3+ii+1)
+				plt.axis('off')
+				if outform == 'last':
+					LAST_PAF = -2
+					LAST_HEAT = -2
+					paf = results[LAST_PAF][ii] # (46, 46, X)
+					heat = results[LAST_HEAT][ii] # (46, 46, X)
+				else:
+					raise Exception('Not supported')
+
+				img = ins[0][ii][-1] # ii-th batch, last img in sequence
+				canvas, _ = skeleton(
+					cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_BGR2RGB),
+					(heat, paf),
+					{ 'thre1':0.06, 'thre2': 0.05})
+				plt.imshow(canvas)
+
 		else:
 			FIRST_BATCH = 0
 			SEQLEN = len(ins[0][0])

@@ -49,11 +49,12 @@ class Video:
 		self.coco_coords.append(coco_coords)
 
 	def ended(self):
-		endindex = len(self.zipped)
 		if self.limit is not None:
-			endindex = self.limit
+			print('==============================')
+			print('LIMIT', self.index, self.limit)
+			return self.index >= self.limit
 
-		return self.index + self.seqlen * self.speedup >= endindex
+		return self.index + self.seqlen * self.speedup >= len(self.zipped)
 
 	def next_segment(self):
 		assert self.augment is not None
@@ -317,7 +318,6 @@ class MultiVideoDataset:
 
 		videos = self.buckets[bind][:bsize]
 		self.buckets[bind] = self.buckets[bind][bsize:] # dequeue videos
-		self.used[bind] += videos
 
 		return videos
 
@@ -351,15 +351,15 @@ class MultiVideoDataset:
 
 			# activate fetched videos
 			# this will reset the frame index and also augmentation
-			# TODO: jitter start time
-			# TODO: Limit play time
 			for vid in videos: vid.reset()
+
+			# limit and jitter playback length
 			if self.limit_playback is not None:
+				limitlen = (self.limit_playback + randint(0, self.vary_playback)) * self.speedup
 				for vid in videos:
-					limitlen = self.limit_playback * self.speedup + randint(0, self.vary_playback)
 					vidlen = len(vid.frames)
-					vidend = vidlen - limitlen
-					randstart = randint(0, vidend - 1)
+					randend = vidlen - limitlen
+					randstart = randint(0, randend - 1)
 					vid.index = int(randstart)
 					vid.limit = int(randstart + limitlen)
 
