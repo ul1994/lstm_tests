@@ -140,7 +140,6 @@ class Snapshot(keras.callbacks.Callback):
 
 		plt.savefig('previews/%s' % save_name, bbox_inches='tight')
 		plt.close()
-		# exit()
 
 	def __init__(self, tag, data_gen, format, every=100, stills=False):
 		self.tag = tag
@@ -154,7 +153,14 @@ class Snapshot(keras.callbacks.Callback):
 
 		for ii, batch in enumerate(data_gen):
 			self.batch = batch
+			print(' [*] Snapshot: fetched one batch from dataset!')
 			break
+
+	began = False
+	def on_batch_begin(self, batch, logs=None):
+		if not self.began:
+			self.began = True
+			print(' [*] Snapshot: training begun')
 
 	def on_batch_end(self, batch, logs=None):
 		if self.bcount < 50:
