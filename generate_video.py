@@ -241,8 +241,8 @@ class MultiVideoDataset:
 					plot_buckets=False,
 					source='penn',
 					vary_playback=2,
-					limit_aspect_ratio=0.67,
-					limit_area=0.67,
+					limit_aspect=0.67,
+					limit_area=700,
 				):
 
 		self.speedup = speedup
@@ -293,20 +293,13 @@ class MultiVideoDataset:
 				box_areas.append(int(ww * hh))
 				box_ratios.append((ww, hh))
 
-			gsize = 100
-			area_count = np.zeros(int(np.max(box_areas) / gsize) + 1)
-			for ent in box_areas: area_count[int(ent/gsize)] += 1
-			distrib_inds = []
-			distrib_vals = []
-			for ind, val in enumerate(area_count):
-				if val > 0:
-					distrib_inds.append(ind)
-					distrib_vals.append(val)
-			mu_area = np.mean(box_areas)/100
-
 			plt.figure(figsize=(14, 5))
-			plt.scatter(distrib_inds, distrib_vals)
-			plt.plot([mu_area, mu_area], [0, 5], color='green')
+			plt.scatter(np.arange(len(box_areas)), np.array(box_areas)/100)
+			mu_area = np.mean(box_areas) / 100
+			oob_area = len([arr for arr in box_areas if arr/100 > 2*mu_area])
+			plt.gca().set_title('Mu: %.2f   OOB: %d' % (mu_area, oob_area))
+			plt.plot([0, len(box_areas)], [mu_area, mu_area], color='orange')
+			plt.plot([0, len(box_areas)], [2*mu_area, 2*mu_area], color='red')
 			plt.show()
 			plt.close()
 
@@ -322,6 +315,27 @@ class MultiVideoDataset:
 			plt.show()
 			plt.close()
 
+		box_areas = []
+		for vid in videos:
+			sample_box = vid.boxes[int(len(vid.boxes)/2)]
+			x0, y0, xf, yf = sample_box
+			ww, hh = xf-x0, yf-y0
+			box_areas.append(int(ww * hh))
+
+		domain_area = [ind for ind, arr in enumerate(box_areas) if arr/100 <= limit_area]
+		print(' [*] Safe area: %d/%d' % (len(domain_area), len(videos)))
+		videos = [videos[ind] for ind in domain_area]
+
+		box_ratios = []
+		for vid in videos:
+			sample_box = vid.boxes[int(len(vid.boxes)/2)]
+			x0, y0, xf, yf = sample_box
+			ww, hh = xf-x0, yf-y0
+			box_ratios.append((ww, hh))
+
+		domain_aspect = [ind for ind, (ww, hh) in enumerate(box_ratios) if hh / ww > limit_aspect]
+		print(' [*] Safe aspect: %d/%d' % (len(domain_aspect), len(videos)))
+		videos = [videos[ind] for ind in domain_aspect]
 
 		buckets = []
 		videos = sorted(videos, key=lambda obj: len(obj.frames))
