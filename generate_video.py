@@ -17,11 +17,12 @@ from training.label_maps import create_heatmap, create_paf
 from training.dataflow import JointsLoader
 
 # [nose, neck, Rsho, Relb, Rwri, Lsho, Lelb, Lwri, Rhip, Rkne, Rank, Lhip, Lkne, Lank, Leye, Reye, Lear, Rear, pt19]
-penn2coco = [0, None, 1, 3, 5, 2, 4, 6, 7, 9, 11, 8, 10, 12, None, None, None, None]
-#                      0 1 2 3 4  5 6 7  8 9 10 11 12 13
-# order_to_pretrain = [2 1 3 7 11 4 8 12 5 9 13 6 10 14];
 
+penn2coco = [0, None, 2, 4, 6, 1, 3, 5, 8, 10, 12, 7, 9, 11, None, None, None, None]
+
+# FIXME: These coords may be wrong
 jhmdb2coco = [2, None, 1, 7, 4, 3, 11, 8, 12, 9, 6, 5, 13, 10, None, None, None, None]
+
 class Video:
 
 	def __init__(self, seqlen, speedup=1):
@@ -50,8 +51,8 @@ class Video:
 
 	def ended(self):
 		if self.limit is not None:
-			print('==============================')
-			print('LIMIT', self.index, self.limit)
+			# print('_____________________')
+			# print('Limit', int((self.limit - self.index) / self.speedup), self.index, self.limit)
 			return self.index >= self.limit
 
 		return self.index + self.seqlen * self.speedup >= len(self.zipped)
@@ -321,17 +322,19 @@ class MultiVideoDataset:
 
 		return videos
 
-	def stream_status(self):
+	def stream_status(self, printout=True):
 		fresh = 0
 		for buck in self.buckets:
 			fresh += len(buck)
-		used = 0
+		used = len(self.streams) # incl # streaming as used
 		for buck in self.used:
 			used += len(buck)
-		print(' [*] Usage: %d/%d' % (used, used + fresh))
+		if printout:
+			print(' [*] Usage: %d/%d' % (used, used + fresh))
 
-		for ii, video in enumerate(self.streams):
-			print('     [*] Stream %d: %s' % (ii, video.frames[0]))
+			for ii, video in enumerate(self.streams):
+				print('     [*] Stream %d: %s' % (ii, video.frames[0]))
+		return fresh, used
 
 	def next_batch(self, bsize=6, format='heatpaf', stop=False):
 
