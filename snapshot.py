@@ -5,6 +5,7 @@ import keras
 import matplotlib.pyplot as plt
 import keras.backend as K
 import cv2
+import PIL
 
 sys.path.append('../tf/ver1')
 from demo_image import find_peaks, inference, colors, resize, skeleton
@@ -138,7 +139,7 @@ class Snapshot(keras.callbacks.Callback):
 				else: raise Exception('Not supported')
 				plt.imshow(np.sum(limbs.astype(np.float32), axis=-1))
 
-		plt.savefig('previews/%s' % save_name, bbox_inches='tight')
+		plt.savefig('previews/%s.jpg' % save_name, bbox_inches='tight')
 		plt.close()
 
 	def __init__(self, tag, data_gen, format, every=100, stills=False):
@@ -164,7 +165,7 @@ class Snapshot(keras.callbacks.Callback):
 
 	def on_batch_end(self, batch, logs=None):
 		if self.bcount < 50:
-			self.eval('%s-%s_%s.png' % (self.tag, self.ecount, self.bcount))
+			self.eval('%s-%s_%s' % (self.tag, self.ecount, self.bcount))
 			self.bcount += 1
 			return
 
@@ -174,7 +175,7 @@ class Snapshot(keras.callbacks.Callback):
 			return
 
 
-		self.eval('%s-%s_%s.png' % (self.tag, self.ecount, self.bcount))
+		self.eval('%s-%s_%s' % (self.tag, self.ecount, self.bcount))
 		# keep saving weights every eval
 		self.model.save_weights('checkpoints/%s-epoch_%d.h5' % (self.tag, self.ecount))
 		self.counter = 1

@@ -78,17 +78,17 @@ class Video:
 		randX = uniform(-96, 96)
 		randY = uniform(-96, 96)
 
-		maxbox = [float('inf'), float('inf'), 0, 0] # x0, y0, xf, yf
+		# maxbox = [float('inf'), float('inf'), 0, 0] # x0, y0, xf, yf
 
-		for (x0, y0, xf, yf) in self.boxes:
-			if x0 < maxbox[0]: maxbox[0] = x0
-			if y0 < maxbox[1]: maxbox[1] = y0
-			if xf > maxbox[2]: maxbox[2] = xf
-			if yf > maxbox[3]: maxbox[3] = yf
+		# for (x0, y0, xf, yf) in self.boxes:
+		# 	if x0 < maxbox[0]: maxbox[0] = x0
+		# 	if y0 < maxbox[1]: maxbox[1] = y0
+		# 	if xf > maxbox[2]: maxbox[2] = xf
+		# 	if yf > maxbox[3]: maxbox[3] = yf
 
-		# TODO: Instead of fitting to the max bounds, conserve the origin
-		#           and use frame-by-frame masks which are available
-		self.boxes = [maxbox for _ in self.boxes]
+		# # TODO: Instead of fitting to the max bounds, conserve the origin
+		# #           and use frame-by-frame masks which are available
+		# self.boxes = [maxbox for _ in self.boxes]
 
 		self.zipped = list(
 			zip(self.frames,self.boxes,self.masks,self.coords,self.coco_coords))
@@ -194,6 +194,7 @@ def fetch_jhmdb(seqlen, speedup):
 
 			lblpath = '%s/%s/%s/joint_positions.mat' % (jointfolder, catfolder, fldr)
 			mat = loadmat(lblpath)
+			# boxes = np.array(mat['bbox'])
 			joints = np.swapaxes(np.array(mat['pos_img']), 0, 2)
 
 			vidobj = Video(speedup=speedup, seqlen=seqlen)
@@ -239,7 +240,10 @@ class MultiVideoDataset:
 					bins=7,
 					plot_buckets=False,
 					source='penn',
-					vary_playback=2):
+					vary_playback=2,
+					limit_aspect_ratio=0.67,
+					limit_area=0.67,
+				):
 
 		self.speedup = speedup
 		self.limit_playback = limit_playback
@@ -279,6 +283,45 @@ class MultiVideoDataset:
 
 			plt.show()
 			plt.close()
+
+			box_ratios = []
+			box_areas = []
+			for vid in videos:
+				sample_box = vid.boxes[int(len(vid.boxes)/2)]
+				x0, y0, xf, yf = sample_box
+				ww, hh = xf-x0, yf-y0
+				box_areas.append(int(ww * hh))
+				box_ratios.append((ww, hh))
+
+			gsize = 100
+			area_count = np.zeros(int(np.max(box_areas) / gsize) + 1)
+			for ent in box_areas: area_count[int(ent/gsize)] += 1
+			distrib_inds = []
+			distrib_vals = []
+			for ind, val in enumerate(area_count):
+				if val > 0:
+					distrib_inds.append(ind)
+					distrib_vals.append(val)
+			mu_area = np.mean(box_areas)/100
+
+			plt.figure(figsize=(14, 5))
+			plt.scatter(distrib_inds, distrib_vals)
+			plt.plot([mu_area, mu_area], [0, 5], color='green')
+			plt.show()
+			plt.close()
+
+			plt.figure(figsize=(14, 5))
+			tall = len([bx for bx in box_ratios if bx[1] >= bx[0]])
+			short = len([bx for bx in box_ratios if bx[1] < bx[0]])
+			flat = len([bx for bx in box_ratios if bx[1] < bx[0]/3*2])
+			plt.gca().set_title('%d / %d / %d' % (tall, short, flat))
+			xs, ys = zip(*box_ratios)
+			plt.scatter(xs, ys)
+			plt.plot([0, 400], [0, 400], color='orange')
+			plt.plot([0, 400], [0, 400 / 3 * 2], color='red')
+			plt.show()
+			plt.close()
+
 
 		buckets = []
 		videos = sorted(videos, key=lambda obj: len(obj.frames))
