@@ -187,7 +187,7 @@ if __name__ == '__main__':
 		steps_per_epoch=args.iters,
 		epochs=args.epochs,
 		callbacks=cblist,
-		use_multiprocessing=False,
 		initial_epoch=0,
-		verbose=1)
+		verbose=1,
+		max_queue_size=1, workers=1, use_multiprocessing=False)
 
